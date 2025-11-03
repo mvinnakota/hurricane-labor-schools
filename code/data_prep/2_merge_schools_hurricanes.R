@@ -119,3 +119,57 @@ save(school_sf_long, file = "school_sf_with_hurricane_info.Rda")
 
 
 
+### COMMUTING ZONE ANALYSIS --------------------------------------------
+
+
+# Start fresh 
+rm(list = ls())
+gc()
+
+# load in ibtracs 
+ibtracs <- sf::read_sf("~/Dropbox/Projects/Firms Project/Analysis/inputs/IBTrACS.since1980.list.v04r00.lines/IBTrACS.since1980.list.v04r00.lines.shp")
+
+# load in the commuting zone data 
+cz_1990 <- readxl::read_excel("~/Downloads/czlma903.xls") # don't really need this, 2000 file has 1980-2000
+cz_2000 <- readxl::read_excel("~/Desktop/cz_2000")
+cz_2020 <- read.csv("~/Desktop/cz_2020")
+
+# start building a county-level dataset that has the 1990, 2000, and 2020 CZs as columns 
+cz_2020 %<>% filter(State == "TX") %>% dplyr::select(fips = FIPStxt, cz_2020 = PreliminaryCZ2020) 
+cz_2000 %<>% filter(substr(FIPS,1,2) == "48") %>% dplyr::select(fips = FIPS, 
+                                                                cz_2000 = `Commuting Zone ID, 2000`,
+                                                                cz_1990 = `Commuting Zone ID, 1990`,
+                                                                cz_1980 = `Commuting Zone ID, 1980`) 
+cz <- merge(cz_2000, cz_2020, by = "fips")
+
+
+# get the shapefile of texas counties 
+texas <- tigris::counties() %>% filter(STATEFP == "48")
+texas %<>% dplyr::select(fips = GEOID, geometry)
+
+# filter ibtracs again (to ever overlapped with texas)
+## first, filter to the hurricanes that intersect with texas at all 
+st_crs(texas)
+st_crs(ibtracs)
+texas %<>% st_transform(crs = st_crs(ibtracs))
+ibtracs_tx <- ibtracs %>% st_filter(texas)
+
+## next, filter to post 1989 hurricanes 
+ibtracs_tx %<>% filter(year >= 1989)
+
+## keep specific columns 
+ibtracs_tx %<>% dplyr::select(SID, SEASON, NAME, NATURE, LAT, LON,
+                              USA_LAT, USA_LON, USA_WIND, USA_SSHS, USA_RMW,
+                              geometry)
+
+
+## st join the counties with the hurricanes that overlap it: will get n:n data 
+texas_ibtracs <- st_join(texas, ibtracs_tx, join = st_intersects)
+ibtracs_texas <- st_join(ibtracs_tx, texas, join = st_intersects)
+
+
+save(ibtracs_texas, file = "ibtracs_texascounties.Rda")
+save(texas_ibtracs, file = "texascounties_ibtracs.Rda")
+
+
+
