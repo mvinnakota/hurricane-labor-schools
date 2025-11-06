@@ -1,12 +1,14 @@
 ###########################################
 # Set up
 ###########################################
-
+library(tidygeocoder)
 library(sf)
 library(tidyverse)
 library(educationdata)
 library(readr)
 library(magrittr)
+setwd("~/")
+setwd("../Box/Research/Natural_Disasters_and_Human_Capital/Data/inputs/")
 
 
 ###########################################
@@ -43,6 +45,39 @@ tx_hs %<>% rename("nces_school_id"="ncessch",
                   "district_name"="lea_name",
                   "x"="latitude", 
                   "y"="longitude")
+
+# Impute address
+tx_hs %<>% mutate(
+  street = ifelse(street_location %in% c(-1,"",NA), street_mailing, street_location),
+  city = ifelse(city_location %in% c(-1,"",NA), city_mailing, city_location),
+  state= "TX",
+  address = paste(street, city, state, sep = ", "),
+  bad_xy = (x>38 | x<23) | (y< -108 | y>-91) | is.na(x) | x==-2
+)
+
+# Impute x and Y when not present
+# First find missing lats and longs
+tx_hs_missing_xy <- tx_hs %>% 
+  subset(bad_xy) %>%
+  select("nces_school_id", "address") %>%
+  distinct()
+
+# get lat and long based on address (takes 2 hours to run)
+# df_geo <- tx_hs_missing_xy %>%
+#   geocode(address = address, method = 'osm', lat = x_geo, long = y_geo)
+load("CCD/geocoded_addresses.Rds")
+
+
+# merge back into data
+tx_hs %<>% left_join(df_geo)
+
+# Impute geocoded lat and long if it is missing
+tx_hs %<>%
+  mutate(
+    x = ifelse(bad_xy, x_geo, x),
+    y = ifelse(bad_xy, y_geo, y)
+  )
+
 
 # For variables that should be stable over time (like address)
 # Find the modal set of values
@@ -95,9 +130,10 @@ school_xy <- stable_vars %>% select(nces_school_id, nces_district_id, x, y)
 ###########################################
 # Save data
 ###########################################
-save(school_info_ccd, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/school_info_ccd.Rds")
-save(school_xy, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/school_xy.Rds")
-save(district_sf, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/district_sf.Rds")
+save(school_info_ccd, file="CCD/school_info_ccd.Rds")
+save(school_xy, file="CCD/school_xy.Rds")
+save(district_sf, file="CCD/district_sf.Rds")
+save(df_geo, file="CCD/geocoded_addresses.Rds")
 
 
 
