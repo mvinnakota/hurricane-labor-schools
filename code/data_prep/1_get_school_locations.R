@@ -1,14 +1,18 @@
 ###########################################
 # Set up
 ###########################################
-library(tidygeocoder)
 library(sf)
 library(tidyverse)
 library(educationdata)
 library(readr)
 library(magrittr)
-setwd("~/")
-setwd("../Box/Research/Natural_Disasters_and_Human_Capital/Data/inputs/")
+library(rstudioapi)
+library(zipcodeR)
+
+
+# set up environment 
+setwd(dirname(getActiveDocumentContext()$path))
+setwd("../../Data/")
 
 
 ###########################################
@@ -45,39 +49,6 @@ tx_hs %<>% rename("nces_school_id"="ncessch",
                   "district_name"="lea_name",
                   "x"="latitude", 
                   "y"="longitude")
-
-# Impute address
-tx_hs %<>% mutate(
-  street = ifelse(street_location %in% c(-1,"",NA), street_mailing, street_location),
-  city = ifelse(city_location %in% c(-1,"",NA), city_mailing, city_location),
-  state= "TX",
-  address = paste(street, city, state, sep = ", "),
-  bad_xy = (x>38 | x<23) | (y< -108 | y>-91) | is.na(x) | x==-2
-)
-
-# Impute x and Y when not present
-# First find missing lats and longs
-tx_hs_missing_xy <- tx_hs %>% 
-  subset(bad_xy) %>%
-  select("nces_school_id", "address") %>%
-  distinct()
-
-# get lat and long based on address (takes 2 hours to run)
-# df_geo <- tx_hs_missing_xy %>%
-#   geocode(address = address, method = 'osm', lat = x_geo, long = y_geo)
-load("CCD/geocoded_addresses.Rds")
-
-
-# merge back into data
-tx_hs %<>% left_join(df_geo)
-
-# Impute geocoded lat and long if it is missing
-tx_hs %<>%
-  mutate(
-    x = ifelse(bad_xy, x_geo, x),
-    y = ifelse(bad_xy, y_geo, y)
-  )
-
 
 # For variables that should be stable over time (like address)
 # Find the modal set of values
@@ -127,13 +98,47 @@ school_info_ccd <- right_join(stable_vars, yearly_vars) %>% select(-x, -y)
 school_xy <- stable_vars %>% select(nces_school_id, nces_district_id, x, y)
 
 
+
+###########################################
+# Add in County and CZ
+###########################################
+# Load commuting zone crosswalk  
+cz_2000 <- readxl::read_excel("inputs/USDA Commuting zones/cz_2000") %>%
+  filter(substr(FIPS, 1, 2) == "48") %>%                  # Texas only
+  select(county_fips = FIPS,
+         cz_2000     = `Commuting Zone ID, 2000`,
+         cz_1990     = `Commuting Zone ID, 1990`)
+
+# Convert schools to sf using lat/lon 
+school_sf <- school_xy %>%
+  filter(!is.na(x) & !is.na(y)) %>%
+  filter(y > -900 & x > -900) %>%                         # drop bad coords
+  st_as_sf(coords = c("y", "x"), crs = 4326)              # lon = y, lat = x
+
+# Load Texas counties and spatial join to get county FIPS
+tx_counties <- tigris::counties(state = "TX", cb = TRUE) %>%
+  st_transform(crs = 4326) %>%
+  select(county_fips = GEOID, county_name = NAME)
+
+school_sf <- st_join(school_sf, tx_counties, join = st_intersects)
+
+# Merge in commuting zones via county FIPS 
+school_sf <- school_sf %>%
+  left_join(cz_2000, by = "county_fips")
+
+# Merge back onto school_xy and school_info_ccd 
+geo_crosswalk <- school_sf %>%
+  st_drop_geometry() %>%
+  select(nces_school_id, county_fips, county_name, cz_1990, cz_2000)
+
+school_info_ccd %<>% left_join(geo_crosswalk, by = "nces_school_id")
+
 ###########################################
 # Save data
 ###########################################
-save(school_info_ccd, file="CCD/school_info_ccd.Rds")
-save(school_xy, file="CCD/school_xy.Rds")
-save(district_sf, file="CCD/district_sf.Rds")
-save(df_geo, file="CCD/geocoded_addresses.Rds")
+save(school_info_ccd, file="inputs/CCD/school_info_ccd.Rds")
+save(school_xy, file="inputs/CCD/school_xy.Rds")
+save(district_sf, file="inputs/CCD/district_sf.Rds")
 
 
 
