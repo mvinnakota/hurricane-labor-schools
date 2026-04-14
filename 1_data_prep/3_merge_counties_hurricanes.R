@@ -8,9 +8,6 @@
 ### Setup --------------------------------------------------------
 gc()
 rm(list = ls())
-library(rstudioapi)
-
-# options
 options(stringsAsFactors = FALSE, scipen = 999)
 
 # load in packages

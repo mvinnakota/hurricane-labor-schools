@@ -13,14 +13,16 @@ library(magrittr)
 library(rvest)
 library(rstudioapi)
 library(purrr)
+library(rstudioapi)
 library(parallel)
 
 
 ###########################################
 # Load Census Data on Construction Permits
 ###########################################
-setwd("~/")
-setwd("Library/CloudStorage/Box-Box/Research/Natural_Disasters_and_Human_Capital/Data/")
+# set up working directory 
+setwd(dirname(getActiveDocumentContext()$path))
+setwd("../../../Data/")
 
 ###########################################
 # Census Building Permits
@@ -242,6 +244,9 @@ mthly_employment <- construction_wages %>%
 # Save 
 ###########################################
 save(qrty_wages, mthly_employment, file="intermediates/bls_wages_employment.Rdata")
+
+
+load("intermediates/bls_wages_employment.Rdata")
 
 
 
