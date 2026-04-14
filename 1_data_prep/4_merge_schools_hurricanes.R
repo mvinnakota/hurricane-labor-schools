@@ -6,24 +6,25 @@
 # ==================================
 
 ### Setup -----------------------------------------------------------------------
+# Options
 gc()
 rm(list = ls())
-
 options(stringsAsFactors = FALSE, scipen = 999)
 
+# packages
 package_list <- c("dplyr", "magrittr", "foreign", "lmtest", "tmap", "nlme",
                   "plm", "zoo", "AER", "tidyr", "data.table", "systemfit",
                   "haven", "ggplot2", "stargazer", "lubridate", "clubSandwich",
-                  "sandwich", "lfe", "readstata13", "locpol", "parallel",    # BUG FIX: removed duplicate "lfe"
+                  "sandwich", "lfe", "readstata13", "locpol", "parallel",    
                   "stringr", "sf", "rstudioapi")
-
 new.packages <- package_list[!(package_list %in% installed.packages()[,"Package"])]
 if (length(new.packages)) invisible(install.packages(new.packages))
 invisible(lapply(package_list, library, character.only = TRUE))
 rm(package_list, new.packages)
 
+# set working directory
 setwd(dirname(getActiveDocumentContext()$path))
-setwd("../../Data/")
+setwd("../../../Data/")
 
 ### Load Data -------------------------------------------------------------------
 load("inputs/CCD/district_sf.Rds")
@@ -43,11 +44,11 @@ ibtracs_tx <- ibtracs %>%
   filter(year >= 1989) %>%
   dplyr::select(SID, SEASON, NAME, NATURE, LAT, LON, ISO_TIME,
                 USA_LAT, USA_LON, USA_WIND, USA_SSHS, USA_RMW)
-# NOTE: USA_RMW is sparse pre-2004 — use as robustness check only
+
 
 ### Convert Schools to SF -------------------------------------------------------
 school_sf <- school_xy %>%
-  filter(!is.na(x), y > -900) %>%                          # drop missing/bad coords
+  filter(!is.na(x), y > -900) %>% # drop missing/bad coords
   st_as_sf(coords = c("y", "x"), crs = st_crs(ibtracs_tx)) %>%
   ungroup()
 
@@ -146,10 +147,3 @@ school_storm <- schools %>%
 save(school_sf_long, file = "intermediates/school_sf_with_hurricane_info.Rda")
 save(school_storm,   file = "intermediates/school_storm_treatment.Rda")
 
-
-
-
-
-
-
-save(school_, file = "school_sf_with_hurricane_info.Rda")
