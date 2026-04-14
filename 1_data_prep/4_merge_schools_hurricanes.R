@@ -52,6 +52,7 @@ school_sf <- school_xy %>%
   st_as_sf(coords = c("y", "x"), crs = st_crs(ibtracs_tx)) %>%
   ungroup()
 
+
 ### Distance Function -----------------------------------------------------------
 sid_list <- unique(ibtracs_tx$SID)
 
@@ -102,7 +103,8 @@ school_cnty <- school_info_ccd %>%
   distinct()
 
 
-### Merge Storm × County --------------------------------------------------------
+### Merge Storm × Place --------------------------------------------------------
+# Which counties were hit by each storm?
 storms <- texas_ibtracs %>%
   st_drop_geometry() %>%
   janitor::clean_names() %>%
@@ -118,14 +120,13 @@ cz_hit <- storms %>%
   distinct() %>%
   mutate(hit_cz = 1)
 
-### Build Treatment Definitions -------------------------------------------------
-schools <- school_sf_long %>%
-  st_drop_geometry() %>%
-  left_join(school_cnty, by = "nces_school_id")
 
-school_storm <- schools %>%
+### Build Treatment Definitions -------------------------------------------------
+school_storm <- school_sf_long %>%
+  left_join(school_cnty, by = "nces_school_id") %>%
   left_join(storms,  by = c("fips", "sid")) %>%
   left_join(cz_hit,  by = c("sid", "school_cz")) %>%
+  
   mutate(
     hit_county = replace_na(hit_county, 0),
     hit_cz     = replace_na(hit_cz,     0),
@@ -144,6 +145,5 @@ school_storm <- schools %>%
   )
 
 ### Export ----------------------------------------------------------------------
-save(school_sf_long, file = "intermediates/school_sf_with_hurricane_info.Rda")
 save(school_storm,   file = "intermediates/school_storm_treatment.Rda")
 
