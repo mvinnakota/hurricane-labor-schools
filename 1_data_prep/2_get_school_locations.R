@@ -1,12 +1,18 @@
 ###########################################
 # Set up
 ###########################################
-
 library(sf)
 library(tidyverse)
 library(educationdata)
 library(readr)
 library(magrittr)
+library(rstudioapi)
+library(zipcodeR)
+
+
+# set up environment 
+setwd(dirname(getActiveDocumentContext()$path))
+setwd("../../Data/")
 
 
 ###########################################
@@ -92,12 +98,47 @@ school_info_ccd <- right_join(stable_vars, yearly_vars) %>% select(-x, -y)
 school_xy <- stable_vars %>% select(nces_school_id, nces_district_id, x, y)
 
 
+
+###########################################
+# Add in County and CZ
+###########################################
+# Load commuting zone crosswalk  
+cz_2000 <- readxl::read_excel("inputs/USDA Commuting zones/cz_2000") %>%
+  filter(substr(FIPS, 1, 2) == "48") %>%                  # Texas only
+  select(county_fips = FIPS,
+         cz_2000     = `Commuting Zone ID, 2000`,
+         cz_1990     = `Commuting Zone ID, 1990`)
+
+# Convert schools to sf using lat/lon 
+school_sf <- school_xy %>%
+  filter(!is.na(x) & !is.na(y)) %>%
+  filter(y > -900 & x > -900) %>%                         # drop bad coords
+  st_as_sf(coords = c("y", "x"), crs = 4326)              # lon = y, lat = x
+
+# Load Texas counties and spatial join to get county FIPS
+tx_counties <- tigris::counties(state = "TX", cb = TRUE) %>%
+  st_transform(crs = 4326) %>%
+  select(county_fips = GEOID, county_name = NAME)
+
+school_sf <- st_join(school_sf, tx_counties, join = st_intersects)
+
+# Merge in commuting zones via county FIPS 
+school_sf <- school_sf %>%
+  left_join(cz_2000, by = "county_fips")
+
+# Merge back onto school_xy and school_info_ccd 
+geo_crosswalk <- school_sf %>%
+  st_drop_geometry() %>%
+  select(nces_school_id, county_fips, county_name, cz_1990, cz_2000)
+
+school_info_ccd %<>% left_join(geo_crosswalk, by = "nces_school_id")
+
 ###########################################
 # Save data
 ###########################################
-save(school_info_ccd, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/school_info_ccd.Rds")
-save(school_xy, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/school_xy.Rds")
-save(district_sf, file="../Box/Natural_Disasters_and_Human_Capital/Data/CCD/district_sf.Rds")
+save(school_info_ccd, file="inputs/CCD/school_info_ccd.Rds")
+save(school_xy, file="inputs/CCD/school_xy.Rds")
+save(district_sf, file="inputs/CCD/district_sf.Rds")
 
 
 
