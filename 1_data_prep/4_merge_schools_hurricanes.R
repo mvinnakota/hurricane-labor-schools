@@ -6,29 +6,12 @@
 # ==================================
 
 ### Setup -----------------------------------------------------------------------
-# Options
-gc()
-rm(list = ls())
-options(stringsAsFactors = FALSE, scipen = 999)
-
-# packages
-package_list <- c("dplyr", "magrittr", "foreign", "lmtest", "tmap", "nlme",
-                  "plm", "zoo", "AER", "tidyr", "data.table", "systemfit",
-                  "haven", "ggplot2", "stargazer", "lubridate", "clubSandwich",
-                  "sandwich", "lfe", "readstata13", "locpol", "parallel",    
-                  "stringr", "sf", "rstudioapi")
-new.packages <- package_list[!(package_list %in% installed.packages()[,"Package"])]
-if (length(new.packages)) invisible(install.packages(new.packages))
-invisible(lapply(package_list, library, character.only = TRUE))
-rm(package_list, new.packages)
-
-# set working directory
+library(rstudioapi)
 setwd(dirname(getActiveDocumentContext()$path))
-setwd("../../../Data/")
+source("../0_helper_functions/packages.R")
+setwd("../../../")
 
 ### Load Data -------------------------------------------------------------------
-load("inputs/CCD/district_sf.Rds")
-load("inputs/CCD/school_info_ccd.Rds")
 load("inputs/CCD/school_xy.Rds")
 load("intermediates/texascounties_ibtracs.Rda")
 
@@ -97,15 +80,9 @@ school_sf_long %<>%
     date          = as.POSIXct(date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
   )
 
-### Merge School County + CZ ----------------------------------------------------
-school_cnty <- school_info_ccd %>%
-  select(nces_school_id, fips = county_fips, school_cz = cz_2000) %>%
-  distinct()
-
-
 ### Merge Storm × Place --------------------------------------------------------
 # Which counties were hit by each storm?
-storms <- texas_ibtracs %>%
+cty_hit <- texas_ibtracs %>%
   st_drop_geometry() %>%
   janitor::clean_names() %>%
   select(fips, sid) %>%
@@ -113,36 +90,30 @@ storms <- texas_ibtracs %>%
   mutate(hit_county = 1)
 
 # Which CZs were hit by each storm?
-cz_hit <- storms %>%
-  left_join(school_cnty %>% select(fips, school_cz) %>% distinct(), by = "fips") %>%
-  filter(!is.na(school_cz)) %>%
-  select(sid, school_cz) %>%
+cz_hit <- cty_hit %>%
+  left_join(st_drop_geometry(school_xy) %>% select(county_fips, cz_2000) %>% distinct(), by = c("fips"="county_fips")) %>%
+  filter(!is.na(cz_2000)) %>%
+  select(sid, cz_2000) %>%
   distinct() %>%
   mutate(hit_cz = 1)
 
 
-### Build Treatment Definitions -------------------------------------------------
+### Build School Storm Panel ---------------------------------------------------
 school_storm <- school_sf_long %>%
-  left_join(school_cnty, by = "nces_school_id") %>%
-  left_join(storms,  by = c("fips", "sid")) %>%
-  left_join(cz_hit,  by = c("sid", "school_cz")) %>%
+  left_join(cty_hit,  by = c("county_fips"="fips", "sid")) %>%
+  left_join(cz_hit,  by = c("sid", "cz_2000")) 
+
+# Create a cohort_year variable
+school_storm$cohort_year <- year(school_storm$date)
   
+### Build Treatment Definitions ------------------------------------------------
+school_storm %<>%
   mutate(
     hit_county = replace_na(hit_county, 0),
     hit_cz     = replace_na(hit_cz,     0),
-    
-    treatment_cnty = case_when(
-      dist_to_miles <= 10  ~ "Direct",
-      hit_county == 1      ~ "Indirect",
-      TRUE                 ~ "Control"
-    ),
-    
-    treatment_cz = case_when(
-      dist_to_miles <= 10  ~ "Direct",
-      hit_cz == 1          ~ "Indirect",
-      TRUE                 ~ "Control"
-    )
+    hit_school = dist_to_miles <= 10
   )
+
 
 ### Export ----------------------------------------------------------------------
 save(school_storm,   file = "intermediates/school_storm_treatment.Rda")
