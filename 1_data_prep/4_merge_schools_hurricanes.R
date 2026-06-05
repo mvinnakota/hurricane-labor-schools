@@ -64,6 +64,7 @@ processIbtracs <- function(i) {
 distances_to_hurrs <- lapply(1:length(sid_list), processIbtracs) %>% bind_cols()
 school_sf %<>% bind_cols(distances_to_hurrs)
 
+
 ### Wide to Long ----------------------------------------------------------------
 school_sf_long <- school_sf %>%
   pivot_longer(
@@ -105,6 +106,10 @@ school_storm <- school_sf_long %>%
 
 # Create a cohort_year variable
 school_storm$cohort_year <- year(school_storm$date)
+
+
+# calculate max category
+school_storm %<>% group_by(sid) %>% mutate(max_cat = max(cat, na.rm=T))
   
 ### Build Treatment Definitions ------------------------------------------------
 school_storm %<>%
