@@ -66,7 +66,7 @@ school_sf %<>% bind_cols(distances_to_hurrs)
 
 
 ### Wide to Long ----------------------------------------------------------------
-school_sf_long <- school_sf %>%
+school_storm <- school_sf %>%
   pivot_longer(
     cols          = matches("^(dist_to|cat|wind|rmw|date|season|name|nature)_"),
     names_to      = c(".value", "sid"),
@@ -74,51 +74,16 @@ school_sf_long <- school_sf %>%
   ) 
 
 # Clean variables
-school_sf_long %<>%
+school_storm %<>%
   rename(dist_to_meters = dist_to) %>%
   mutate(
     dist_to_miles = dist_to_meters / 1609.34,
     date          = as.POSIXct(date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
   )
 
-### Merge Storm × Place --------------------------------------------------------
-# Which counties were hit by each storm?
-cty_hit <- texas_ibtracs %>%
-  st_drop_geometry() %>%
-  janitor::clean_names() %>%
-  select(fips, sid) %>%
-  distinct() %>%
-  mutate(hit_county = 1)
-
-# Which CZs were hit by each storm?
-cz_hit <- cty_hit %>%
-  left_join(st_drop_geometry(school_xy) %>% select(county_fips, cz_2000) %>% distinct(), by = c("fips"="county_fips")) %>%
-  filter(!is.na(cz_2000)) %>%
-  select(sid, cz_2000) %>%
-  distinct() %>%
-  mutate(hit_cz = 1)
-
-
-### Build School Storm Panel ---------------------------------------------------
-school_storm <- school_sf_long %>%
-  left_join(cty_hit,  by = c("county_fips"="fips", "sid")) %>%
-  left_join(cz_hit,  by = c("sid", "cz_2000")) 
-
-# Create a cohort_year variable
-school_storm$cohort_year <- year(school_storm$date)
-
-
 # calculate max category
-school_storm %<>% group_by(sid) %>% mutate(max_cat = max(cat, na.rm=T))
+school_storm %<>% group_by(sid) %>% mutate(max_cat = max(cat, na.rm=T)) %>% ungroup()
   
-### Build Treatment Definitions ------------------------------------------------
-school_storm %<>%
-  mutate(
-    hit_county = replace_na(hit_county, 0),
-    hit_cz     = replace_na(hit_cz,     0),
-    hit_school = dist_to_miles <= 10
-  )
-
 
 ### Export ----------------------------------------------------------------------
 save(school_storm,   file = "intermediates/school_storm_treatment.Rda")

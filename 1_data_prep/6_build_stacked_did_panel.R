@@ -12,20 +12,42 @@ source("../0_helper_functions/packages.R")
 setwd("../../../")
 
 ### Load Data -------------------------------------------------------------------
-load("intermediates/school_storm_treatment.Rda")
+# load("intermediates/school_storm_treatment.Rda")
 
 
 ### Function ---------------------------------------------------------------
-Build_Panel <- function(df, direct_var="hit_school", indirect_var="hit_cz", 
+Build_Panel <- function(df, direct_var="direct", indirect_geo="cz", 
                         years_since=7, pre_years=4, post_years=4, never_treated=T){
-  
   # create direct and indirect vars
-  df %<>% 
-    mutate(
-    direct = df[[direct_var]], 
-    indirect = df[[indirect_var]]
-    )
+  df %<>% ungroup() %>% mutate(direct = df[[direct_var]])
   
+  # build indirect treatment var
+  if(indirect_geo == "county"){
+    df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(direct == 1)))
+  }
+  if(indirect_geo == "cz"){
+    df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(direct == 1)))
+  }
+  
+  # Make sure panel is storm by school and not storm by point in time by school
+  df %<>%
+    group_by(nces_school_id, sid) %>%
+    summarise(
+      season      = first(season),
+      county_fips = first(county_fips),
+      cz_2000     = first(cz_2000),
+      high_cedp   = first(high_cedp),
+      # closest approach over the entire track
+      dist_to_miles = min(dist_to_miles, na.rm = TRUE),
+      # storm intensity (storm-level, so max == any point)
+      max_cat = max(cat,  na.rm = TRUE),
+      wind    = max(wind, na.rm = TRUE),
+      # treated if the condition held at ANY point on the track
+      direct = as.integer(any(direct == 1, na.rm = TRUE)),
+      indirect  = as.integer(any(indirect == 1, na.rm = TRUE)),
+      .groups = "drop"
+    )
+
   # Enforce mutual exclusivity: if a unit is directly treated, it cannot also be indirectly treated
   df$indirect <- ifelse(df$direct == 1, 0, df$indirect)
   
@@ -53,8 +75,7 @@ Build_Panel <- function(df, direct_var="hit_school", indirect_var="hit_cz",
       lag_season = dplyr::lag(season_if_hit),
       # seasons since last hit (Inf if no prior hit)
       time_since_hit = ifelse(is.na(lag_season), Inf, season - lag_season)
-    ) 
-
+    ) %>%
     select(-lag_season, -season_if_hit) %>%
     ungroup()
   
@@ -80,7 +101,6 @@ Build_Panel <- function(df, direct_var="hit_school", indirect_var="hit_cz",
         direct   := ifelse(panel_season < storm_season, 0, direct),
         indirect := ifelse(panel_season < storm_season, 0, indirect)
       )
-    
     storm_panels %<>% c(list(panel_df))
   }
   
@@ -89,13 +109,10 @@ Build_Panel <- function(df, direct_var="hit_school", indirect_var="hit_cz",
   return(storm_panels)
 }
 
-# Create Test Panel
-stacked_did <- school_storm %>% subset(high_cedp == 1 & cat %in% c(1:5)) %>% Build_Panel()
-
 
 # # Psuedo-Code Examples
 # # Build Hurricane Panel
-# hurricane_panel  <- df %>% subset(only_hurricanes) %>% Build_Panel
+# stacked_did <- school_storm %>% subset(high_cedp == 1 & cat %in% c(1:5)) %>% Build_Panel(never_treated=F)
 # 
 # 
 # # No never treated
@@ -104,6 +121,6 @@ stacked_did <- school_storm %>% subset(high_cedp == 1 & cat %in% c(1:5)) %>% Bui
 # 
 # # Only include schools ever within 100 miles of a hurricane
 # close_by_panel   <- df %>% subset(within_100) %>% Build_Panel()
-# 
+
 
 
