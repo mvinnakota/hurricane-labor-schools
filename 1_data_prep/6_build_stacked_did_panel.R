@@ -112,9 +112,11 @@ Build_Panel <- function(df, direct_var="direct", indirect_geo="cz",
 
 # # Psuedo-Code Examples
 # # Build Hurricane Panel
-# stacked_did <- school_storm %>% subset(high_cedp == 1 & cat %in% c(1:5)) %>% Build_Panel(never_treated=F)
-# 
-# 
+# stacked_did <- school_storm %>%
+#   mutate(direct = dist_to_miles < 10 & cat %in% c(1:5)) %>%
+#   subset(high_cedp == 1)  %>%
+#   Build_Panel(never_treated = T)
+
 # # No never treated
 # ever_treat_panel <- df %>% Build_Panel(never_treated=F)
 # 

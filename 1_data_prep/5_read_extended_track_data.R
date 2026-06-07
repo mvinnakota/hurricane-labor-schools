@@ -34,9 +34,9 @@ setwd("../../../")
 # load in school-hurr data
 load("intermediates/school_hurr_treatment.Rda")
 
-# EBTRAK data for pre-2004 guesses 
-ebtrak_df <- read.delim("~/Downloads/EBTRK_AL_final_1851-2021_new_format_02-Sep-2022-1.txt",
-                        sep = " ", row.names = NULL)
+# # EBTRAK data for pre-2004 guesses 
+# ebtrak_df <- read.delim("~/Downloads/EBTRK_AL_final_1851-2021_new_format_02-Sep-2022-1.txt",
+#                         sep = " ", row.names = NULL)
 
 # ── Column positions (1-indexed, inclusive) for the EBTRK new format ----------
 # All lines are exactly 124 characters.
@@ -169,8 +169,8 @@ ebtrak_df %<>%
 # check that the ibtracs data and the hurdat2 data overlap
 table(unique(school_hurr$name %in% ebtrak_df$name)) # they are all in there 
 
-# filter EBTRAK to only hurricanes we are studying 
-ebtrak_df %<>% filter(name %in% school_hurr$name)
+# # filter EBTRAK to only hurricanes we are studying 
+# ebtrak_df %<>% filter(name %in% school_hurr$name)
 
 
 save(ebtrak_df, file = "intermediates/ebtrak_df.Rda")
