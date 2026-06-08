@@ -211,24 +211,31 @@ school_storm_unique <- school_sectors_raw %>%
 #   sum(school_storm_unique$wind_64kt)
 # ))
 
-save(school_storm_unique, file = "intermediates/school_storm_unique 2026 06 05.Rda")
-
 # clean disaster declaration data --------------------------------------------------------
 
 
 # Load FEMA disaster declarations
 dd_df <- read.csv("inputs/DisasterDeclarationsSummaries.csv", stringsAsFactors = FALSE)
 
+# subset to the years that we had a hurricane 
+dd_df %<>% mutate(year = year(dd_df$declarationDate) %>% as.character())
+school_storm_unique %<>% mutate(year = str_extract(storm_year_id,pattern = "[0-9]{4}"))
+dd_df %<>% filter(year %in% school_storm_unique$year)
+
 # Subset to Texas hurricane/tropical storm declarations only
 dd_tx <- dd_df %>%
   filter(
-    state == "TX",
-    incidentType %in% c("Hurricane", "Tropical Storm", "Typhoon")
-  ) %>%
+  #  incidentType %in% c("Hurricane", "Tropical Storm", "Typhoon"),
+    state == "TX"
+  ) 
+
+# subset to hurricanes/flooding/tropical storm/typhoon
+dd_tx %<>%
+  filter(str_detect(declarationTitle, "HURRICANE|TROPICAL STORM|FLOOD|EXCESSIVE RAIN")) %>%
   mutate(
     # Extract storm name from declarationTitle (e.g. "HURRICANE RITA" -> "RITA")
     storm_name_raw = toupper(trimws(
-      str_remove(declarationTitle, regex("^(HURRICANE|TROPICAL STORM|TYPHOON)\\s+", ignore_case = TRUE))
+      str_remove(declarationTitle, regex("^(HURRICANE|TROPICAL STORM|FLOOD|EXCESSIVE RAIN)\\s+", ignore_case = TRUE))
     )),
     incidentBeginDate = as.Date(substr(incidentBeginDate, 1, 10)),
     # Build full 5-digit county FIPS: state (2) + county (3, zero-padded)
@@ -238,25 +245,16 @@ dd_tx <- dd_df %>%
     )
   )
 
-# Storms present in wind_sectors_texas (just the base name, no year)
-texas_storm_names <- wind_sectors_texas %>%
-  st_drop_geometry() %>%
-  distinct(name, year) %>%
-  mutate(storm_name_key = toupper(trimws(name)))
+# get the storm name in a unique column 
+school_storm_unique %<>% mutate(hurr_name = str_replace(storm_year_id, 
+                                                        pattern = "\\_[0-9]{4}", 
+                                                        replacement = "") %>% trimws()) 
+# create giant regex
+regex_hurr <- paste0(unique(school_storm_unique$hurr_name)[-1], collapse = "|")
 
-# Match disaster declarations to Texas storm names by substring.
-# FEMA titles like "HURRICANE IKE" match EBTRK name "IKE".
-dd_tx_matched <- dd_tx %>%
-  inner_join(texas_storm_names, by = c("storm_name_raw" = "storm_name_key")) %>%
-  mutate(storm_year_id = paste(storm_name_raw, year, sep = "_")) %>%
-  dplyr::select(storm_year_id, fips_county) %>%
-  distinct()
+# find the storm names in dd_tx
+dd_tx %<>% mutate(storm_name_found = str_extract(declarationTitle, pattern = regex_hurr))
 
-message(sprintf(
-  "Matched %d disaster declaration county-storm pairs across %d storms",
-  nrow(dd_tx_matched),
-  n_distinct(dd_tx_matched$storm_year_id)
-))
 
 # Load Texas county shapefile via tigris
 tx_counties <- tigris::counties(state = "TX", cb = TRUE, resolution = "5m") %>%
@@ -265,36 +263,13 @@ tx_counties <- tigris::counties(state = "TX", cb = TRUE, resolution = "5m") %>%
 
 # Spatial join: assign each school its county FIPS
 # (schools already have point geometry in school_sf)
-school_county <- school_sf %>%
-  st_join(
-    tx_counties %>% dplyr::select(fips_county),
-    join = st_within,
-    left = TRUE
-  ) %>%
-  st_drop_geometry() %>%
-  dplyr::select(ncessch, fips_county) %>%
-  distinct()
+ school_storm_unique %<>%
+  st_join(tx_counties %>% dplyr::select(fips_county),
+    join = st_within) 
 
 # Flag: was the school's county a declared disaster county for that storm?
-disaster_flags <- school_storm_unique %>%
-  left_join(school_county, by = "ncessch") %>%
-  left_join(dd_tx_matched, by = c("storm_year_id", "fips_county")) %>%
-  mutate(disaster_county = as.integer(!is.na(fips_county) &
-                                        paste(storm_year_id, fips_county) %in%
-                                        paste(dd_tx_matched$storm_year_id, dd_tx_matched$fips_county))) %>%
-  dplyr::select(ncessch, storm_year_id, disaster_county)
-
-school_storm_unique <- school_storm_unique %>%
-  left_join(disaster_flags, by = c("ncessch", "storm_year_id")) %>%
-  mutate(disaster_county = replace_na(disaster_county, 0L))
-
-message(sprintf(
-  "%d school-storm pairs in a declared disaster county",
-  sum(school_storm_unique$disaster_county)
-))
-
+school_storm_unique %<>% mutate(dd_flag = ifelse(hurr_name %in% dd_tx$storm_name_found[!is.na(dd_tx$storm_name_found)],
+                                                 1,0)) 
 
 ### Save -----------------------------------------------------------
-save(school_storm_unique, file = "intermediates/school_storm_unique.Rda")
-message("Saved: intermediates/school_storm_unique.Rda")
-
+save(school_storm_unique, file = "intermediates/school_storm_unique 2026 06 08.Rda")
