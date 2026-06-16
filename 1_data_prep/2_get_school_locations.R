@@ -151,7 +151,7 @@ tx_counties <- tigris::counties(state = "TX", cb = TRUE) %>%
   st_transform(crs = 4326) %>%
   select(county_fips = GEOID, county_name = NAME)
 
-school_xy %<>% st_join(tx_counties, join = st_intersects)
+school_xy %<>% st_join(tx_counties, join = st_intersects, left=TRUE)
 
 # Merge in commuting zones via county FIPS 
 school_xy %<>% left_join(cz_2000, by = "county_fips")
@@ -159,8 +159,8 @@ school_xy %<>% left_join(cz_2000, by = "county_fips")
 # Merge in other variables
 school_xy %<>% left_join(distinct(select(ccd_data, nces_school_id, high_cedp)))
 
-
-
+# drop schools with missing ids
+school_xy %<>% filter(nces_school_id != "NULL")
 
 ###########################################
 # Save data
