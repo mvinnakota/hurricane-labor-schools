@@ -86,5 +86,5 @@ school_storm %<>% group_by(sid) %>% mutate(max_cat = max(cat, na.rm=T)) %>% ungr
   
 
 ### Export ----------------------------------------------------------------------
-save(school_storm,   file = "intermediates/school_storm_treatment.Rda")
+save(school_storm,   file = "intermediates/school_storm.Rda")
 

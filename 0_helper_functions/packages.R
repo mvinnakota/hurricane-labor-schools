@@ -9,7 +9,7 @@ package_list <- c("dplyr", "magrittr", "foreign", "lmtest", "tmap", "nlme", "ggr
                   "haven", "ggplot2", "stargazer", "lubridate", "clubSandwich",
                   "sandwich", "lfe", "readstata13", "locpol", "parallel", "forcats",    
                   "stringr", "sf", "rstudioapi", "viridis", "scales", "educationdata",
-                  "zipcodeR", "readr")
+                  "zipcodeR", "readr", "geosphere")
 new.packages <- package_list[!(package_list %in% installed.packages()[,"Package"])]
 if (length(new.packages)) invisible(install.packages(new.packages))
 invisible(lapply(package_list, library, character.only = TRUE))

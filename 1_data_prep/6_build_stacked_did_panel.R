@@ -13,6 +13,7 @@ setwd("../../../")
 
 ### Load Data -------------------------------------------------------------------
 # load("intermediates/school_storm_treatment.Rda")
+load("intermediates/school_storm_unique 2026 06 08.Rda")
 
 
 ### Function ---------------------------------------------------------------
@@ -23,7 +24,7 @@ Build_Panel <- function(df, direct_var="direct", indirect_geo="cz",
   
   # build indirect treatment var
   if(indirect_geo == "county"){
-    df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(direct == 1)))
+    df %<>% group_by(sid, fips_county) %>% mutate(indirect = as.integer(any(direct == 1)))
   }
   if(indirect_geo == "cz"){
     df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(direct == 1)))
@@ -33,15 +34,10 @@ Build_Panel <- function(df, direct_var="direct", indirect_geo="cz",
   df %<>%
     group_by(nces_school_id, sid) %>%
     summarise(
-      season      = first(season),
-      county_fips = first(county_fips),
-      cz_2000     = first(cz_2000),
-      high_cedp   = first(high_cedp),
-      # closest approach over the entire track
-      dist_to_miles = min(dist_to_miles, na.rm = TRUE),
-      # storm intensity (storm-level, so max == any point)
-      max_cat = max(cat,  na.rm = TRUE),
-      wind    = max(wind, na.rm = TRUE),
+      year      = first(year),
+      fips_county = first(fips_county),
+      # cz_2000     = first(cz_2000),
+      # high_cedp   = first(high_cedp),
       # treated if the condition held at ANY point on the track
       direct = as.integer(any(direct == 1, na.rm = TRUE)),
       indirect  = as.integer(any(indirect == 1, na.rm = TRUE)),
@@ -110,12 +106,10 @@ Build_Panel <- function(df, direct_var="direct", indirect_geo="cz",
 }
 
 
-# # Psuedo-Code Examples
-# # Build Hurricane Panel
-# stacked_did <- school_storm %>%
-#   mutate(direct = dist_to_miles < 10 & cat %in% c(1:5)) %>%
-#   subset(high_cedp == 1)  %>%
-#   Build_Panel(never_treated = T)
+# Psuedo-Code Examples
+# Build Hurricane Panel
+stacked_did <- school_storm_unique %>%
+  Build_Panel(indirect_geo="county", never_treated = T)
 
 # # No never treated
 # ever_treat_panel <- df %>% Build_Panel(never_treated=F)

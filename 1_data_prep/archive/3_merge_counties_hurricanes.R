@@ -6,9 +6,24 @@
 # ==================================
 
 ### Setup --------------------------------------------------------
-library(rstudioapi)
+gc()
+rm(list = ls())
+options(stringsAsFactors = FALSE, scipen = 999)
+
+# load in packages
+package_list <- c("dplyr", "magrittr", "foreign", "lmtest",
+"tmap", "nlme", "plm", "zoo", "AER", "tidyr", "data.table",
+"systemfit", "haven", "ggplot2", "stargazer", "lubridate",
+"clubSandwich", "sandwich", "lfe", "Synth", "readstata13",
+"locpol", "parallel", "stringr", "lfe", "sf", "rstudioapi")
+new.packages <- package_list[!(package_list %in% installed.packages()[,"Package"])]
+if(length(new.packages)) invisible(install.packages(new.packages))
+invisible(lapply(package_list, library, character.only = TRUE))
+rm(package_list, new.packages)
+
+
+# set up working directory 
 setwd(dirname(getActiveDocumentContext()$path))
-source("../0_helper_functions/packages.R")
 setwd("../../Data/")
 
 # load in ibtracs 
