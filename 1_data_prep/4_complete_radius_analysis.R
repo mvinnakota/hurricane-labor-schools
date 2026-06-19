@@ -16,27 +16,65 @@ setwd("../../../")
 load("intermediates/ebtrak_df.Rda")
 # load in school data 
 load("inputs/CCD/school_xy.Rds")
+# load in ibtracs data
+ibtracs <- sf::read_sf("inputs/IBTrACS.since1980.list.v04r00.lines/IBTrACS.since1980.list.v04r00.lines.shp")
 
-### Clean data -----------------------------------------------------
-# make school sf
-school_sf <- school_xy %>%
-  filter(!is.na(x), y > -900) %>% # drop missing/bad coords
-  st_as_sf(coords = c("y", "x")) %>%
-  ungroup()
 
-target_crs <- st_crs(school_sf)
+
+# ==================================================================
+### Clean IBTRAK Data
+# ==================================================================
+ibtracs %<>% janitor::clean_names() 
+
+# Create storm level data
+storms <- ibtracs %>%
+  st_drop_geometry() %>%
+  group_by(sid) %>%
+  summarise(max_cat = max(usa_sshs),
+            year = first(season),
+            name = first(toupper(trimws(name))),
+            date = min(date(iso_time)))
+
+
+# Filter ibtracs to ever overlapped with texas
+# First, get the shapefile of texas counties 
+txcntys <- tigris::counties() %>% filter(STATEFP == "48")
+txcntys %<>% dplyr::select(fips = GEOID, geometry)
+## Next, filter to the hurricanes that intersect with texas at all 
+st_crs(txcntys)
+st_crs(ibtracs)
+txcntys %<>% st_transform(crs = st_crs(ibtracs))
+ibtracs_tx <- ibtracs %>% st_filter(txcntys)
+
+# Get SIDs of storms whose trajectory touched texas
+traj_sids <- ibtracs_tx %>% pull(sid)
+
+
+
+
+
+# ==================================================================
+### Clean EBTRAK Data
+# ==================================================================
+target_crs <- st_crs(school_xy)
 
 #  Convert ebtrak_df to sf (WGS84 first, then reproject) 
 # EBTRK lon is already converted to degrees East (negative = west) in code 5
 ebtrak_sf <- ebtrak_df %>%
   filter(!is.na(lon), !is.na(lat)) %>%
-  st_as_sf(coords = c("lon", "lat"), crs = target_crs, remove = FALSE)
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE)  # raw numbers are WGS84 degrees
 
 # Reproject to match school_hurr
 ebtrak_sf <- st_transform(ebtrak_sf, crs = target_crs)
 
-# ── 3. Helper: build one quadrant sector polygon 
 
+
+
+
+# ==================================================================
+### Build Wind Sectos from EBTRAK Data
+# ==================================================================
+# Helper: build one quadrant sector polygon 
 # Creates a wedge polygon on the sphere given:
 #   center_lon/lat : decimal degrees (WGS84)
 #   radius_nm      : radius in nautical miles
@@ -73,7 +111,7 @@ quadrants <- list(
 # Wind speed thresholds available in ebtrak_df
 wind_speeds <- c(34, 50, 64)
 
-# ── 4. Build sector polygons for every observation 
+# Build sector polygons for every observation 
 # Output: one row per (observation × wind_speed × quadrant) with the sector polygon.
 # Rows where radius is NA or 0 are dropped.
 
@@ -119,67 +157,161 @@ build_sectors <- function(df) {
     st_transform(crs = target_crs)
 }
 
-message("Building wind sectors (this may take a few minutes for large datasets)...")
+# Building wind sectors
 wind_sectors_sf <- build_sectors(ebtrak_df)
 
-message(sprintf("Built %d quadrant sectors across %d storms",
-                nrow(wind_sectors_sf),
-                n_distinct(wind_sectors_sf$storm_id)))
 
-# ── 5. Quick sanity check: CRS match 
-stopifnot(st_crs(wind_sectors_sf) == st_crs(school_sf))
-message("CRS check passed — wind_sectors_sf and school_sf are compatible.")
+
+
+
+# ==================================================================
+### Subset Wind sectors to texas storms
+# ==================================================================
+# first merge with IBTRACKS storm meta data
+# build storm vars to merge 
+wind_sectors_sf %<>%
+  group_by(storm_id) %>%
+  mutate(begin_pad = date(min(obs_time)) - 14,
+         end_pad   = date(min(obs_time)) + 14,
+         name = toupper(trimws(name))) %>%
+  ungroup()
+
+# Merge on date, name, and year
+wind_sectors_sf %<>% 
+  left_join(storms, join_by(begin_pad <= date, end_pad >= date, name, year)) 
 
 # figure out which storms overlap with Texas 
 texas <- tigris::states(cb = TRUE) %>%
   filter(NAME == "Texas") %>%
   st_transform(crs = st_crs(wind_sectors_sf))
 
-# ── 2. Subset wind sectors to those overlapping Texas 
+# Subset wind sectors to those overlapping Texas 
 wind_sectors_texas <- wind_sectors_sf %>%
-  filter(st_intersects(geometry, st_union(texas), sparse = FALSE)[, 1])
+  filter(st_intersects(geometry, st_union(texas), sparse = FALSE)[, 1] | 
+           sid %in% traj_sids) 
 
-message(sprintf(
-  "%d of %d sectors overlap Texas (%d unique storms)",
-  nrow(wind_sectors_texas),
-  nrow(wind_sectors_sf),
-  n_distinct(wind_sectors_texas$name)
-))
+# Get SIDs of storms whose winds or trajectories touch texas
+wind_sids <- wind_sectors_texas %>% 
+  st_drop_geometry() %>% 
+  pull(sid) %>% unique()
 
-# build storm unique ID 
-wind_sectors_texas %<>%
-  mutate(storm_year_id = paste(toupper(trimws(name)), year, sep = "_"))
 
-### Merge schools with wind sectors --------------------------------
+# ==================================================================
+### Clean disaster declaration data
+# ==================================================================
+# Load FEMA disaster declarations
+dd_df <- read.csv("inputs/DisasterDeclarationsSummaries.csv", stringsAsFactors = FALSE)
+
+# Clean variables
+dd_df %<>% 
+  mutate(
+    # Convert date string to date
+    incidentBeginDate = as.Date(substr(incidentBeginDate, 1, 10)),
+    incidentEndDate = as.Date(substr(incidentEndDate, 1, 10)),
+    # Build full 5-digit county FIPS: state (2) + county (3, zero-padded)
+    county_fips = paste0(
+      str_pad(fipsStateCode, 2, pad = "0"),
+      str_pad(fipsCountyCode, 3, pad = "0")
+    )) %>% janitor::clean_names()
+
+# subset to the years we have storm data for
+dd_df %<>% filter(incident_end_date <= max(storms$date))
+
+# Subset to Texas hurricane/tropical storm declarations only
+dd_tx_storms <- dd_df %>% 
+  filter(state == "TX") %>%
+  filter(str_detect(declaration_title, "HURRICANE|TROPICAL STORM|FLOOD|EXCESSIVE RAIN")) 
+
+# Extract storm names from IBTRAKs
+# First get list of all storms
+storm_names_regex <- paste0("\\b(", paste0(unique(ibtracs$name), collapse = "|"), ")\\b")
+# Then search for those names in the declaration title
+dd_tx_storms %<>%
+  mutate(name = str_extract_all(declaration_title, storm_names_regex)) %>%
+  unnest(name, keep_empty = TRUE)
+
+# merge in storm information
+dd_tx_storms %<>%
+  mutate(
+    begin_pad = incident_begin_date - 14,
+    end_pad   = incident_end_date + 14
+  ) %>%
+  inner_join(
+    # only merge with storms that hit texas
+    subset(storms, sid %in% c(wind_sids, traj_sids)),
+    # merge on date of disaster
+    join_by(begin_pad <= date, end_pad >= date)
+  ) %>%
+  # only keep merges that have matching storm names 
+  # (or has the same date, but is missing a storm name in disaster data)
+  filter((is.na(name.x)) | name.x == name.y)
+
+  
+# Select only necessary variables to make flag
+dd_tx_storms %<>% 
+  select(county_fips, incident_type, sid) %>% 
+  group_by(county_fips, sid) %>%
+  summarise(incident_type = paste(unique(incident_type), collapse = ", ")) %>%
+  ungroup() %>%
+  mutate(dd_flag = 1)
+
+# Get SIDs of storms who cause a declared disaster in texas
+dd_sids <- dd_tx_storms %>% pull(sid)
+
+# Save just texas disasters
+dd_tx <- dd_df %>% filter(state == "TX") %>%
+  select(county_fips, contains("declaration"), contains("incident"), contains("_code")) %>%
+  distinct()
+
+
+
+
+# ==================================================================
+### Create storm level data for all Texas storms
+# ==================================================================
+# subset to only storms in our sample
+storms_tx <- storms %>% subset(sid %in% c(wind_sids, traj_sids, dd_sids))
+
+
+
+
+
+
+# ==================================================================
+### Create school_storm level Data
+# ==================================================================
+# all unique schools
+schools_unique <- school_xy %>% 
+  st_drop_geometry() %>%
+  distinct(nces_school_id, tea_school_id, county_fips, cz_2000)
+
+# all unique storms
+storms_unique <- storms_tx %>% distinct(sid, name, year)
+
+# cross join: every school × every storm
+school_storm_grid <- crossing(schools_unique, storms_unique)
+
+
+
+# ==================================================================
+### Merge school_storm data with wind sectors
+# ==================================================================
 # Spatial join: each school point against Texas wind sector polygons.
 # left = TRUE keeps all schools even if they fall outside every sector.
 # Result has one row per school × sector match; a school hit by multiple
 # quadrants or obs_times of the same storm will appear more than once here.
 school_sectors_raw <- st_join(
-  school_sf,
-  wind_sectors_texas %>% dplyr::select(name, year, storm_year_id, wind_speed_kt),
+  school_xy,
+  wind_sectors_texas %>% dplyr::select(name, year, sid, "ebtrak_sid"="storm_id", wind_speed_kt),
   join = st_within,
   left = TRUE
 )
 
-# all unique schools
-schools_unique <- school_sf %>% 
-  st_drop_geometry() %>%
-  distinct(nces_school_id, tea_school_id, county_fips, cz_2000)
-
-# all unique storms
-storms_unique <- wind_sectors_texas %>%
-  st_drop_geometry() %>%
-  distinct(storm_year_id, name, year)
-
-# cross join: every school × every storm
-school_storm_grid <- crossing(schools_unique, storms_unique)
-
 # collapse observed exposures (no NAs since we filtered)
 school_storm_exposed <- school_sectors_raw %>%
   st_drop_geometry() %>%
-  filter(!is.na(storm_year_id)) %>%
-  group_by(nces_school_id, tea_school_id, county_fips, cz_2000, name, year, storm_year_id) %>%
+  filter(!is.na(sid)) %>%
+  group_by(nces_school_id, tea_school_id, county_fips, cz_2000, name, year, sid, ebtrak_sid) %>%
   summarise(
     wind_34kt = as.integer(any(wind_speed_kt == 34, na.rm = TRUE)),
     wind_50kt = as.integer(any(wind_speed_kt == 50, na.rm = TRUE)),
@@ -191,91 +323,39 @@ school_storm_exposed <- school_sectors_raw %>%
 school_storm_unique <- school_storm_grid %>%
   left_join(school_storm_exposed, 
             by = c("nces_school_id", "tea_school_id", "county_fips", 
-                   "cz_2000", "storm_year_id", "name", "year")) %>%
+                   "cz_2000", "sid", "name", "year")) %>%
   mutate(across(c(wind_34kt, wind_50kt, wind_64kt), ~replace_na(.x, 0L)))
 
-# # Confirm uniqueness
-# stopifnot(nrow(school_storm_unique) == nrow(distinct(school_storm_unique, nces_school_id, tea_school_id, county_fips, name, year, storm_year_id)))
-# message(sprintf("school_storm_unique: %d unique school-storm pairs", nrow(school_storm_unique)))
-# 
-# message(sprintf(
-#   "Wind exposure summary:\n  34kt: %d school-storm pairs\n  50kt: %d\n  64kt: %d",
-#   sum(school_storm_unique$wind_34kt),
-#   sum(school_storm_unique$wind_50kt),
-#   sum(school_storm_unique$wind_64kt)
-# ))
 
-# clean disaster declaration data --------------------------------------------------------
-# Load FEMA disaster declarations
-dd_df <- read.csv("inputs/DisasterDeclarationsSummaries.csv", stringsAsFactors = FALSE)
 
-# subset to the years that we had a hurricane 
-dd_df %<>% mutate(year = year(dd_df$declarationDate) %>% as.character())
-school_storm_unique %<>% mutate(year = str_extract(storm_year_id,pattern = "[0-9]{4}"))
-dd_df %<>% filter(year %in% school_storm_unique$year)
 
-# Subset to Texas hurricane/tropical storm declarations only
-dd_tx <- dd_df %>% 
-  filter(state == "TX") %>%
-  # filter(incidentType %in% c("Hurricane", "Tropical Storm", "Typhoon")) %>%
-  filter(str_detect(declarationTitle, "HURRICANE|TROPICAL STORM|FLOOD|EXCESSIVE RAIN")) %>%
-  mutate(
-    # Extract storm name from declarationTitle (e.g. "HURRICANE RITA" -> "RITA")
-    name = toupper(trimws(
-      str_remove(declarationTitle, regex("^(HURRICANE|TROPICAL STORM|FLOOD|EXCESSIVE RAIN)\\s+", ignore_case = TRUE))
-    )),
-    incidentBeginDate = as.Date(substr(incidentBeginDate, 1, 10)),
-    # Build full 5-digit county FIPS: state (2) + county (3, zero-padded)
-    county_fips = paste0(
-      str_pad(fipsStateCode, 2, pad = "0"),
-      str_pad(fipsCountyCode, 3, pad = "0")
-    )
-  ) %>% janitor::clean_names()
-
-# Select only necessary variables to make flag
-dd_tx %<>% select(county_fips, year, name, incident_type) %>% 
-  mutate(dd_flag = 1) %>% 
-  unique()
-
-# Merge declared disaster flag with school storm data and impute zeros
-school_storm_unique %<>% left_join(dd_tx) %>% mutate(dd_flag = replace_na(dd_flag, 0L))
+# ==================================================================
+### Merge school_storm data with storm metadata 
+# ==================================================================
+# Merge into school storm data
+school_storm_unique %<>% 
+  mutate(year = as.integer(year)) %>% 
+  left_join(storms)
 
 
 
 
-
-
-
-### Merge in storm meta data from ibtracs --------------------------------------
-# load in ibtracs 
-ibtracs <- sf::read_sf("inputs/IBTrACS.since1980.list.v04r00.lines/IBTrACS.since1980.list.v04r00.lines.shp")
-ibtracs %<>% janitor::clean_names()
-# Subset to storms in data
-ibtracs %<>% mutate(storm_year_id = paste(toupper(trimws(name)), year, sep = "_"))
-ibtracs_tx <- ibtracs %>% filter(storm_year_id %in% school_storm_unique$storm_year_id)
-
-# Create storm level data
-storm_tx <- ibtracs_tx %>%
-  st_drop_geometry() %>%
-  group_by(sid) %>%
-  summarise(max_cat = max(usa_sshs),
-            year = first(season),
-            name = first(name),
-            date = first(date(iso_time)))
-
-school_storm_unique %<>% mutate(year = as.integer(year)) %>% left_join(storm_tx) 
+# ==================================================================
+### Merge school_storm data with declared disaster flag 
+# ==================================================================
+school_storm_unique %<>% 
+  left_join(dd_tx_storms) %>% 
+  mutate(dd_flag = replace_na(dd_flag, 0L))
 
 
 
 
-
-
-
-
-
-### Get school to track distances  ---------------------------------------------------------
+# ==================================================================
+### Merge IBTRAKS data with school_storm data
+### and calculate distance to eye of storm
+# ==================================================================
 # Reproject to match ibtracs
-school_ibtracs_sf <- school_sf %>% st_transform(crs = st_crs(ibtracs_tx))
+school_ibtracs_sf <- school_xy %>% st_transform(crs = st_crs(ibtracs_tx))
 
 ### Calculate Distances 
 sid_list <- unique(ibtracs_tx$sid)
@@ -285,8 +365,6 @@ processIbtracs <- function(i) {
   
   ibtracs_sid <- ibtracs_tx %>% filter(sid == sid_list[i])
   dist_matrix  <- st_distance(school_ibtracs_sf, ibtracs_sid)
-  nearest_idx  <- apply(dist_matrix, 1, which.min)
-  nearest_hurr <- ibtracs_sid[nearest_idx, ]
   
   data.frame(dist_to  = apply(dist_matrix, 1, min)) %>%
     rename_with(~ paste0(.x, "_", sid_list[i]))
@@ -309,13 +387,40 @@ school_storm_distance %<>%
   rename(dist_to_meters = dist_to) %>%
   mutate(dist_to_miles = dist_to_meters / 1609.34)
 
-### Merge in storm data
+### Merge into storm_school data
 school_storm_unique %<>% left_join(school_storm_distance) 
 
 
 
 
 ### Save -----------------------------------------------------------
+school_storm_unique %<>% rename("storm_name"="name", "storm_year"="year")
 save(school_storm_unique, file = "intermediates/school_storm_unique.Rda")
+
+storms_tx %<>% rename("storm_name"="name", "storm_year"="year")
+save(storms_tx, file = "intermediates/texas_storms.Rda")
+
+save(dd_tx, file = "intermediates/texas_disasters.Rda")
+
+
+# ==================================================================
+### Save wind-field footprint for plotting
+# ==================================================================
+
+# Dissolve the per-observation wedges into one footprint per storm x wind speed
+# (the total area ever exposed to >= that wind speed). Keep only the Texas-sample
+# storms -- wind_sectors_sf spans the whole Atlantic basin and unmatched EBTRK
+# storms have sid = NA, so filtering here both restricts to our storms and drops
+# the NA group. Use planar geometry (sf_use_s2(FALSE)) to match how the plotting
+# code clips the field, then restore the previous setting.
+.old_s2 <- sf::sf_use_s2()
+sf::sf_use_s2(FALSE)
+wind_footprint <- wind_sectors_sf %>%
+  filter(sid %in% storms_tx$sid) %>%
+  group_by(sid, wind_speed_kt) %>%
+  summarise(.groups = "drop") %>%
+  sf::st_make_valid()
+sf::sf_use_s2(.old_s2)
+save(wind_footprint, file = "intermediates/wind_footprint.Rda")
 
 

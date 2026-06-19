@@ -52,6 +52,7 @@ graph$color <- c("#4ec3c9", #teal
 graph$theme <- list(scale_color_manual(values=graph$color),
                    scale_fill_manual(values=graph$color),
                    guides(fill=guide_legend(title=NULL)))
+
 graph$hurr_theme <- list(
   theme(legend.position = "right"),
   scale_fill_manual(

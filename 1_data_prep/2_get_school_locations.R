@@ -140,6 +140,7 @@ school_xy %<>% mutate(
 # merge in school vars
 school_xy %<>% left_join(school_vars)
 
+
 ###########################################
 # Add in County and CZ
 ###########################################
@@ -157,6 +158,7 @@ school_xy %<>% st_join(tx_counties, join = st_intersects, left=TRUE)
 school_xy %<>% left_join(cz_2000, by = "county_fips")
 
 # Merge in other variables
+stop("Check whether this line is needed")
 school_xy %<>% left_join(distinct(select(ccd_data, nces_school_id, high_cedp)))
 
 # drop schools with missing ids

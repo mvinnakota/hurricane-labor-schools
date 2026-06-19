@@ -6,31 +6,13 @@
 # ==================================
 
 ### Setup --------------------------------------------------------
-
-gc()
-rm(list = ls())
-
-# options
-options(stringsAsFactors = FALSE, scipen = 999)
-
-# load in packages
-package_list <- c("dplyr", "magrittr", "foreign", "lmtest",
-"tmap", "nlme", "plm", "zoo", "AER", "tidyr", "data.table",
-"systemfit", "haven", "ggplot2", "stargazer", "lubridate",
-"clubSandwich", "sandwich", "lfe", "Synth", "readstata13",
-"locpol", "parallel", "stringr", "lfe", "sf", "readr")
-new.packages <- package_list[!(package_list %in% installed.packages()[,"Package"])]
-if(length(new.packages)) invisible(install.packages(new.packages))
-invisible(lapply(package_list, library, character.only = TRUE))
-rm(package_list, new.packages)
-
-# set up environment 
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library(rstudioapi)
+setwd(dirname(getActiveDocumentContext()$path))
+source("../0_helper_functions/packages.R")
 setwd("../../../")
 
 
 # Load in data -----------------------------------------------------------------
-
 # load in school-hurr data
 load("intermediates/school_hurr_treatment.Rda")
 
@@ -131,7 +113,7 @@ ebtrk_raw <- readr::read_fwf(
 )
 
 # filter to 1990 onwards 
-ebtrak_df <- ebtrk_raw %>% filter(year > 1990) 
+ebtrak_df <- ebtrk_raw %>% filter(year >= 1990) 
 
 # clean up some columns like date, remove the -99s 
 ebtrak_df %<>%
