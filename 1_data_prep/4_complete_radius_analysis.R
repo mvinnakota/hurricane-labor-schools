@@ -196,6 +196,9 @@ wind_sids <- wind_sectors_texas %>%
   pull(sid) %>% unique()
 
 
+
+
+
 # ==================================================================
 ### Clean disaster declaration data
 # ==================================================================
@@ -355,17 +358,20 @@ school_storm_unique %<>%
 ### and calculate distance to eye of storm
 # ==================================================================
 # Reproject to match ibtracs
-school_ibtracs_sf <- school_xy %>% st_transform(crs = st_crs(ibtracs_tx))
+school_ibtracs_sf <- school_xy %>% st_transform(crs = st_crs(ibtracs))
 
-### Calculate Distances 
-sid_list <- unique(ibtracs_tx$sid)
+### Calculate Distances
+# Distance to the storm track for every storm in the sample (storms_tx), 
+# not just those whose track crossed Texas (ibtracs_tx). 
+ibtracs_sample <- ibtracs %>% filter(sid %in% storms_tx$sid)
+sid_list <- unique(storms_tx$sid)
 
 processIbtracs <- function(i) {
   print(sid_list[i])
-  
-  ibtracs_sid <- ibtracs_tx %>% filter(sid == sid_list[i])
+
+  ibtracs_sid <- ibtracs_sample %>% filter(sid == sid_list[i])
   dist_matrix  <- st_distance(school_ibtracs_sf, ibtracs_sid)
-  
+
   data.frame(dist_to  = apply(dist_matrix, 1, min)) %>%
     rename_with(~ paste0(.x, "_", sid_list[i]))
 }
@@ -384,13 +390,69 @@ school_storm_distance <- school_ibtracs_sf %>%
 # Clean variables
 school_storm_distance %<>%
   select(nces_school_id, tea_school_id, sid, dist_to) %>%
-  rename(dist_to_meters = dist_to) %>%
-  mutate(dist_to_miles = dist_to_meters / 1609.34)
+  rename(dist_to_eye_meters = dist_to) %>%
+  mutate(dist_to_eye_miles = dist_to_eye_meters / 1609.34)
 
 ### Merge into storm_school data
-school_storm_unique %<>% left_join(school_storm_distance) 
+school_storm_unique %<>% left_join(school_storm_distance)
 
 
+
+
+# ==================================================================
+### Calculate distance between each school and each wind field (34/50/64 kt)
+# ==================================================================
+# Same idea as the track distance above, but measuring to the storm's wind
+# footprint at each speed threshold instead of the eye/track. A school inside a
+# given field gets distance 0; storms that produced no winds at that threshold
+# have no field to measure to and get NA.
+school_winds_sf <- school_xy %>% st_transform(crs = st_crs(wind_sectors_sf))
+
+# Min distance from every school to one storm's wind footprint at a given speed.
+# Returns one column (named by sid) of distances in meters; NA if the storm had
+# no footprint at that speed.
+dist_to_wind <- function(sid_i, footprints) {
+  print(sid_i)
+  fp_sid <- footprints %>% filter(sid == sid_i)
+  d <- if (nrow(fp_sid) == 0) rep(NA_real_, nrow(school_winds_sf))
+       else as.numeric(st_distance(school_winds_sf, fp_sid)[, 1])
+  setNames(data.frame(d), paste0("d_", sid_i))
+}
+
+for (ws in c(34, 50, 64)) {
+  message("Distance to ", ws, "-kt winds")
+  # Dissolve each storm's quadrant wedges into ONE footprint polygon at this
+  # speed, so distance is measured to a single per-storm geometry (faster, and
+  # identical to the min over individual wedges).
+  footprints_ws <- wind_sectors_sf %>%
+    filter(wind_speed_kt == ws, sid %in% storms_tx$sid) %>%
+    group_by(sid) %>%
+    summarise(.groups = "drop")
+
+  # one distance column per storm, then reshape long and attach school ids
+  dist_wide  <- lapply(sid_list, dist_to_wind, footprints = footprints_ws) %>% bind_cols()
+  meters_col <- paste0("dist_to_", ws, "kt_meters")
+
+  dist_long <- school_winds_sf %>%
+    st_drop_geometry() %>%
+    select(nces_school_id, tea_school_id) %>%
+    bind_cols(dist_wide) %>%
+    pivot_longer(cols = starts_with("d_"), names_to = "sid",
+                 names_prefix = "d_", values_to = meters_col) %>%
+    mutate("dist_to_{ws}kt_miles" := .data[[meters_col]] / 1609.34)
+
+  ### Merge into storm_school data
+  school_storm_unique %<>% left_join(dist_long, by = c("nces_school_id", "tea_school_id", "sid"))
+}
+
+
+
+# ==================================================================
+### Merge school_storm data with school metadata
+# ==================================================================
+# Merge into school storm data
+school_storm_unique %<>% 
+  left_join(select(st_drop_geometry(school_xy), -cz_2000))
 
 
 ### Save -----------------------------------------------------------

@@ -35,7 +35,8 @@ library(tibble)
 Diff_in_Diff <- function(dep_var   = "total_yearly_wages",
                          treat_vars = c("direct", "indirect"),
                          ind_vars   = NULL,
-                         fixed_fx   = c("panel_year", "county_fips"),
+                         fixed_fx   = c("panel_year", "county_fips",
+                                        "ever_direct", "ever_indirect"),
                          df         = county_did){
   
   # Cluster variable and cohort-specific fixed-effect keys
@@ -57,13 +58,6 @@ Plot_Event_Study <- function(dep_var = "total_yearly_wages",
   
   # Drop missing observations in the dependent variable
   df %<>% subset(!is.na(get(dep_var)))
-  
-  df %<>%
-    group_by(county_fips, sid) %>%
-    mutate(
-      ever_direct   = as.integer(any(direct   == 1)),
-      ever_indirect = as.integer(any(indirect == 1))
-    )
   
   # Treatment x event-time dummies, with event time -1 as the reference period.
   # ever_treated * event_time leaves never-treated (control) rows at 0, and folds
@@ -105,20 +99,19 @@ Plot_Event_Study <- function(dep_var = "total_yearly_wages",
   coef$low  <- coef$Estimate - qnorm(1 - 0.05/2) * coef$Std..Error
   coef$high <- coef$Estimate + qnorm(1 - 0.05/2) * coef$Std..Error
   
-  # Tidy outcome name for the axis label
-  y_lab <- str_replace_all(dep_var, "_", " ") %>% str_to_title()
-  
   coef %>%
     ggplot(aes(x = event_time, y = Estimate, color=treatment_type)) +
     geom_hline(yintercept = 0,    linetype = "dashed", color = "grey60") +
     geom_vline(xintercept = -0.5, linetype = "dotted", color = "grey40") +
-    geom_errorbar(aes(ymin = low, ymax = high), width = 0.1) +
-    geom_line() +
-    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = low, ymax = high), width = 0.1, position = position_dodge(width = 0.3)) +
+    geom_line(position = position_dodge(width = 0.3)) +
+    geom_point(size = 2, position = position_dodge(width = 0.3)) +
     scale_x_continuous(breaks = coef$event_time) +
     scale_color_manual(values=point_colors) +
     xlab("Years since storm") +
-    ylab("Coefficient") + 
+    ylab("Coefficient") +
+    facet_grid(cols=vars(treatment_type)) +
+    theme(legend.position = "none") +
     ggtitle(str_to_title(str_replace_all(dep_var, "_", " ")))
 }
 
@@ -143,7 +136,8 @@ source("Code/hurricane-labor-schools/1_data_prep/5_build_stacked_did_panel.R")
 # Total construction wages by county-year.
 yearly_wages <- qrty_wages %>%
   mutate(calendar_year = year,
-         year = ifelse(qtr <= 1, year - 1, year)) %>%
+         year = ifelse(qtr <= 1, year - 1, year)
+         ) %>%
   group_by(fips_state_county, year) %>%
   summarise(total_yearly_wages = sum(total_qtrly_wages), .groups = "drop") %>%
   mutate(log_total_yearly_wages = log(total_yearly_wages))
@@ -175,17 +169,34 @@ yearly_units <- census_permits %>%
 #   direct   = 50-kt wind exposure (wind_50kt)
 #   indirect = commuting-zone (cz_2000) spillover from a directly-hit school
 
-stacked_did <- Build_Panel(radius_miles = 100)
+stacked_did <- Build_Panel(
+  df=school_storm_unique,
+  direct_var="wind_64kt",
+  indirect_var="wind_64kt",
+  indirect_geo="cz",
+  pre_years=4, post_years=3,
+  never_treated=T,
+  years_since=7,
+  donut="wind_50kt",
+  radius_miles=100,
+  radius_var="dist_to_64kt_miles",
+  sample_years = c(1989:2019)
+  )
+
 
 # Collapse to county treatment
 county_did <- stacked_did %>%
   group_by(county_fips, cz_2000, sid, storm_year, panel_year, event_time) %>%
   summarise(
     direct = as.integer(any(direct==1)), 
-    indirect = as.integer(any(indirect==1))) %>%
+    indirect = as.integer(any(indirect==1)),
+    ever_direct = as.integer(any(ever_direct==1)), 
+    ever_indirect = as.integer(any(ever_indirect==1)),
+    ) %>%
   ungroup()
 
 county_did$indirect <- ifelse(county_did$direct == 1, 0, county_did$indirect)
+county_did$ever_indirect <- ifelse(county_did$ever_direct == 1, 0, county_did$ever_indirect)
 
 # Merge the outcome on the observation year (panel_year).
 county_did %<>%

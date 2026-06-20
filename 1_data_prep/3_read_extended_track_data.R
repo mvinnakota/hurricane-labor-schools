@@ -13,13 +13,6 @@ setwd("../../../")
 
 
 # Load in data -----------------------------------------------------------------
-# load in school-hurr data
-load("intermediates/school_hurr_treatment.Rda")
-
-# # EBTRAK data for pre-2004 guesses 
-# ebtrak_df <- read.delim("~/Downloads/EBTRK_AL_final_1851-2021_new_format_02-Sep-2022-1.txt",
-#                         sep = " ", row.names = NULL)
-
 # ── Column positions (1-indexed, inclusive) for the EBTRK new format ----------
 # All lines are exactly 124 characters.
 # Longitude is stored as degrees West (positive = west), per HURDAT convention.
@@ -85,7 +78,7 @@ col_pos <- readr::fwf_positions(
 
 # read in the raw fixth width file 
 ebtrk_raw <- readr::read_fwf(
-  "~/Downloads/EBTRK_AL_final_1851-2021_new_format_02-Sep-2022-1.txt",
+  "inputs/HURDAT/EBTRK_AL_final_1851-2021_new_format_02-Sep-2022-1.txt",
   col_positions = col_pos,
   col_types = readr::cols(
     storm_id       = col_character(),
@@ -112,8 +105,8 @@ ebtrk_raw <- readr::read_fwf(
   )
 )
 
-# filter to 1990 onwards 
-ebtrak_df <- ebtrk_raw %>% filter(year >= 1990) 
+# Wind radii are only available from 1988 onwards
+ebtrak_df <- ebtrk_raw %>% filter(year >= 1980) 
 
 # clean up some columns like date, remove the -99s 
 ebtrak_df %<>%
@@ -146,13 +139,6 @@ ebtrak_df %<>%
     starts_with("r34"), starts_with("r50"), starts_with("r64"),
     dist_land_km, source_code
   )
-
-
-# check that the ibtracs data and the hurdat2 data overlap
-table(unique(school_hurr$name %in% ebtrak_df$name)) # they are all in there 
-
-# # filter EBTRAK to only hurricanes we are studying 
-# ebtrak_df %<>% filter(name %in% school_hurr$name)
 
 
 save(ebtrak_df, file = "intermediates/ebtrak_df.Rda")

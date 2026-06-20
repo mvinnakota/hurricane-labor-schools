@@ -1,28 +1,11 @@
 # ==================================
 # Author: EH
-# Date: Updated 05/26/26
+# Date Updated 06/19/26
 # Project: Hurricanes + Schools
 # Description: Write function to create stacked did panel
 # ==================================
 
-### Setup -----------------------------------------------------------------------
-library(rstudioapi)
-setwd(dirname(getActiveDocumentContext()$path))
-source("../0_helper_functions/packages.R")
-setwd("../../../")
-
-### Load Data -------------------------------------------------------------------
-# load("intermediates/school_storm_unique.Rda")
-
-
 ### Function ---------------------------------------------------------------
-# Defaults
-# subset to 64kts (main treatment)
-# not been hit with 50kt storm
-# 50kts as a buffer
-# less than 50kts and in same commuting zone as 64 kt winds
-# Check never treated
-
 Build_Panel <- function(df=school_storm_unique, 
                         direct_var="wind_64kt",
                         indirect_var="wind_64kt",
@@ -31,7 +14,9 @@ Build_Panel <- function(df=school_storm_unique,
                         never_treated=T, 
                         years_since=7, 
                         donut="wind_50kt",
-                        radius_miles=100){
+                        radius_miles=100,
+                        radius_var="dist_to_64kt_miles",
+                        sample_years = c(1989:2019)){
 
   # create direct and indirect vars
   df %<>% ungroup() %>% mutate(direct = get(direct_var))
@@ -89,14 +74,17 @@ Build_Panel <- function(df=school_storm_unique,
     # (not treated within years_since prior years)
     storm_df %<>% filter(time_since_hit > years_since)
     
-    # If donut, then drop schools that were hit by any wind from the indirect treatment group
+    # If donut, then drop schools that were hit by any wind from the indirect or control group
     if(!is.null(donut)){
       storm_df %<>% mutate(donut_var = get(donut))
       storm_df %<>% filter(!(donut_var & !direct))
       }
     
     # Drop schools outside the radius
-    if(!is.null(radius_miles)){storm_df %<>% filter(dist_to_miles <= radius_miles)}
+    if(!is.null(radius_miles)){
+      storm_df %<>% mutate(radius = get(radius_var))
+      storm_df %<>% filter(radius <= radius_miles)
+      }
     
     # # skip if no eligible schools, or no variation in direct-hit status
     if(nrow(storm_df) == 0 || all(storm_df$direct) || !any(storm_df$direct)) next
@@ -110,6 +98,8 @@ Build_Panel <- function(df=school_storm_unique,
       mutate(
         event_time = panel_year - s_year,
         # zero out treatment in pre-period; hold constant at storm-year values post-period
+        ever_direct = direct, 
+        ever_indirect = indirect,
         direct   := ifelse(panel_year < s_year, 0, direct),
         indirect := ifelse(panel_year < s_year, 0, indirect)
       )
@@ -118,13 +108,12 @@ Build_Panel <- function(df=school_storm_unique,
   
   # Stack into a single dataframe
   storm_panels %<>% bind_rows()
+  
+  # subset to sample years
+  storm_panels %<>% filter(storm_year %in% sample_years)
   return(storm_panels)
 }
 
-
-# Psuedo-Code Examples
-# Build Hurricane Panel
-stacked_did <- Build_Panel(donut=NULL)
 
 
 
