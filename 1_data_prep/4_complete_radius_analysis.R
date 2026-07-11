@@ -35,7 +35,6 @@ storms <- ibtracs %>%
             name = first(toupper(trimws(name))),
             date = min(date(iso_time)))
 
-
 # Filter ibtracs to ever overlapped with texas
 # First, get the shapefile of texas counties 
 txcntys <- tigris::counties() %>% filter(STATEFP == "48")
@@ -45,6 +44,14 @@ st_crs(txcntys)
 st_crs(ibtracs)
 txcntys %<>% st_transform(crs = st_crs(ibtracs))
 ibtracs_tx <- ibtracs %>% st_filter(txcntys)
+
+# Create storm level data for the parts of the storm that touch texas
+storms <- ibtracs_tx %>%
+  st_drop_geometry() %>%
+  group_by(sid) %>%
+  summarise(max_cat_tx = max(usa_sshs)) %>%
+  right_join(storms)
+
 
 # Get SIDs of storms whose trajectory touched texas
 traj_sids <- ibtracs_tx %>% pull(sid)
@@ -406,7 +413,16 @@ school_storm_unique %<>% left_join(school_storm_distance)
 # footprint at each speed threshold instead of the eye/track. A school inside a
 # given field gets distance 0; storms that produced no winds at that threshold
 # have no field to measure to and get NA.
-school_winds_sf <- school_xy %>% st_transform(crs = st_crs(wind_sectors_sf))
+#
+# Work in a projected, metre-based CRS (EPSG:5070, CONUS Albers) with planar
+# geometry: dissolving the quadrant wedges can leave degenerate edges that s2's
+# strict spherical validation rejects (st_distance errors with "Loop 0 is not
+# valid: Edge ... is degenerate"). Planar GEOS distance + st_make_valid avoids
+# that and still returns metres. s2 is restored afterward.
+metric_crs <- 5070
+.old_s2 <- sf::sf_use_s2()
+sf::sf_use_s2(FALSE)
+school_winds_sf <- school_xy %>% st_transform(metric_crs)
 
 # Min distance from every school to one storm's wind footprint at a given speed.
 # Returns one column (named by sid) of distances in meters; NA if the storm had
@@ -423,11 +439,14 @@ for (ws in c(34, 50, 64)) {
   message("Distance to ", ws, "-kt winds")
   # Dissolve each storm's quadrant wedges into ONE footprint polygon at this
   # speed, so distance is measured to a single per-storm geometry (faster, and
-  # identical to the min over individual wedges).
+  # identical to the min over individual wedges). st_make_valid cleans any
+  # degenerate edges left by the union.
   footprints_ws <- wind_sectors_sf %>%
     filter(wind_speed_kt == ws, sid %in% storms_tx$sid) %>%
+    st_transform(metric_crs) %>%
     group_by(sid) %>%
-    summarise(.groups = "drop")
+    summarise(.groups = "drop") %>%
+    st_make_valid()
 
   # one distance column per storm, then reshape long and attach school ids
   dist_wide  <- lapply(sid_list, dist_to_wind, footprints = footprints_ws) %>% bind_cols()
@@ -444,6 +463,7 @@ for (ws in c(34, 50, 64)) {
   ### Merge into storm_school data
   school_storm_unique %<>% left_join(dist_long, by = c("nces_school_id", "tea_school_id", "sid"))
 }
+sf::sf_use_s2(.old_s2)
 
 
 

@@ -22,8 +22,6 @@ source("../0_helper_functions/packages.R")
 source("../0_helper_functions/graph_themes.R")
 setwd("../../../")
 
-# packages.R does not currently load these; needed for feols()/etable() and
-# rownames_to_column(). Consider adding "fixest" and "tibble" to packages.R.
 library(fixest)
 library(tibble)
 
@@ -90,7 +88,7 @@ Plot_Event_Study <- function(dep_var = "total_yearly_wages",
     mutate(event_time = as.integer(str_extract(treatment_event, "-?\\d+$"))) %>%
     arrange(event_time)
   
-  # Get Dummy for treatment ty[e]
+  # Get Dummy for treatment type
   coef %<>%
     mutate(treatment_type = ifelse(grepl("D", treatment_event), "Direct", "Indirect"))
   
