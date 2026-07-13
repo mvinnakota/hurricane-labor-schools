@@ -14,10 +14,14 @@ Build_Panel <- function(df=school_storm_unique,
                         never_treated=T, 
                         years_since=7, 
                         donut="wind_50kt",
-                        radius_miles=100,
+                        radius_miles=300,
                         radius_var="dist_to_64kt_miles",
-                        sample_years = c(1989:2019)){
+                        sample_years = c(1989:2019),
+                        keep_previously_hit = FALSE){
 
+  # drop storms that were not hurricanes when they touched texas
+  df %<>% subset(max_cat_tx>=1)
+  
   # create direct and indirect vars
   df %<>% ungroup() %>% mutate(direct = get(direct_var))
   if(is.null(indirect_var)){
@@ -72,7 +76,14 @@ Build_Panel <- function(df=school_storm_unique,
     storm_df  <- df %>% filter(sid == s)
     # subset to schools eligible for this storm panel
     # (not treated within years_since prior years)
-    storm_df %<>% filter(time_since_hit > years_since)
+    if(!keep_previously_hit){
+      storm_df %<>% filter(time_since_hit > years_since)
+    } else {
+      storm_df %<>% mutate(
+        previously_hit = time_since_hit <= years_since,
+        direct = ifelse(time_since_hit <= years_since, FALSE, direct),
+        indirect = ifelse(time_since_hit <= years_since, FALSE, indirect)) 
+      }
     
     # If donut, then drop schools that were hit by any wind from the indirect or control group
     if(!is.null(donut)){
@@ -87,7 +98,7 @@ Build_Panel <- function(df=school_storm_unique,
       }
     
     # # skip if no eligible schools, or no variation in direct-hit status
-    if(nrow(storm_df) == 0 || all(storm_df$direct) || !any(storm_df$direct)) next
+    if(nrow(storm_df) == 0 || !any(storm_df$direct)) next
     
     # Save year of the storm
     s_year <- unique(storm_df$storm_year)

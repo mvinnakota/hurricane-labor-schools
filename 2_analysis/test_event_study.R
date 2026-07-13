@@ -36,8 +36,21 @@ Diff_in_Diff <- function(dep_var   = "yearly_wages",
                          controls   = NULL,
                          fixed_fx   = c("event_time^sid", "tea_school_id^sid"),
                          df         = test_data){
-
-  # Build the estimating formula: outcome ~ treatment terms + controls 
+  # Get total number of event years
+  total_years <- n_distinct(data$event_time)
+  
+  # dropping missingness in the dependent variable
+  data %<>% subset(!is.na(get(dep_var)))
+  
+  # make sure panel is balanced by dropping schools that cannot
+  # be observed in all years
+  data %<>%
+    group_by(sid, tea_school_id) %>%
+    mutate(n_years = n_distinct(event_time)) %>%
+    subset(n_years == total_years) %>%
+    ungroup()
+  
+  # Build the estimating formula: outcome ~ treatment + controls 
   rhs  <- paste0("`", c(treat_vars, controls), "`")
   fmla <- paste(dep_var, "~", paste(rhs, collapse = " + "))
   # Add fixed effects
@@ -77,11 +90,18 @@ Event_Study <- function(dep_var  = "yearly_wages",
 
   
   # --- Build event-time x treatment dummies 
+  # this code interacts each of the treatment variables with each of the 
+  # event time dummy variables
   treat_var_dummies <- c()
+  # for each event time dummy
   for(col in event_time_cols){
+    # for each treatment variable
     for(var in treat_vars){
+      # Name a new column
     dn <- paste0(var, "_", col)
+    # interact treatment and event time dummy
     df[[dn]] <- df[[col]] * df[[var]] 
+    # add name to the list of treatment event time dummies
     treat_var_dummies %<>% c(dn)
     }}
 
@@ -155,7 +175,7 @@ source("Code/hurricane-labor-schools/1_data_prep/5_build_stacked_did_panel.R")
 #   indirect = commuting-zone (cz_2000) spillover from a directly-hit school
 
 stacked_did <- Build_Panel(
-  df=school_storm_unique %>% subset(high_cedp==1),
+  df=school_storm_unique,
   direct_var="wind_64kt",
   indirect_var="wind_64kt",
   indirect_geo="cz",
@@ -184,6 +204,14 @@ test_data <- stacked_did %>%
   left_join(test_data, by=c("tea_school_id", "panel_year"="cohort_year")) %>%
   select("student_id","sid","tea_school_id","storm_name","panel_year",
          "event_time","direct","indirect","ever_direct","ever_indirect","yearly_wages")
+
+
+stacked_did %>%  
+  select(tea_school_id, storm_name, sid, ever_direct, ever_indirect) %>%
+  distinct() %>%
+  group_by(storm_name, sid) %>%
+  summarize(n_direct = sum(ever_direct), n_indirect = sum(ever_indirect))
+  
   
 
 # =============================================================================

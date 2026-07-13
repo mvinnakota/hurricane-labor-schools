@@ -42,13 +42,14 @@ stacked_did <- Build_Panel(
   direct_var="wind_64kt",
   indirect_var="wind_50kt",
   indirect_geo="cz",
-  pre_years=4, post_years=3,
+  pre_years=4, post_years=2,
   never_treated=T,
   years_since=7,
   donut=NULL,
   radius_miles=300,
   radius_var="dist_to_64kt_miles",
-  sample_years = c(1989:2017)
+  sample_years = c(1989:2019),
+  keep_previously_hit = T
   ) %>%
   filter(high_cedp == 1)
 
@@ -56,10 +57,15 @@ stacked_did <- Build_Panel(
 # (event_time == 0 holds the un-zeroed storm-year values of direct / indirect.)
 groups <- stacked_did %>%
   filter(event_time == 0) %>%
-  distinct(sid, nces_school_id, direct, indirect) %>%
+  distinct(sid, nces_school_id, direct, indirect, previously_hit) %>%
   mutate(group = factor(
-    case_when(direct == 1 ~ "Direct", indirect == 1 ~ "Indirect", TRUE ~ "Control"),
-    levels = c("Control", "Indirect", "Direct")        # Direct drawn last
+    case_when(
+      previously_hit ~ "Previously Hit",
+      direct == 1 ~ "Direct", 
+      indirect == 1 ~ "Indirect", 
+      TRUE ~ "Control"),
+    # bottom -> top draw order (arrange(group) draws in this order; last = on top)
+    levels = c("Control", "Previously Hit", "Indirect", "Direct")
   ))
 
 # School locations joined to each school-storm's treatment status. School
@@ -88,6 +94,19 @@ gulf_margin <- sf::st_as_sfc(sf::st_bbox(
   sf::st_transform(st_crs(points))
 view_bb   <- sf::st_bbox(c(sf::st_as_sfc(sf::st_bbox(tx_counties)), gulf_margin))
 view_rect <- sf::st_as_sfc(view_bb)                   # rectangle used to trim the wind field
+
+# Commuting-zone boundaries (basemap): dissolve Texas counties into their USDA
+# 2000 commuting zones, matching the cz_2000 grouping used to define indirect
+# treatment in Build_Panel(). s2 is off (set above), so the dissolve uses planar
+# geometry; st_make_valid cleans any slivers left by the union.
+cz_xwalk <- readxl::read_excel("inputs/USDA Commuting zones/cz_2000") %>%
+  filter(substr(FIPS, 1, 2) == "48") %>%              # Texas only
+  select(county_fips = FIPS, cz_2000 = `Commuting Zone ID, 2000`)
+tx_cz <- tx_counties %>%
+  left_join(cz_xwalk, by = c("GEOID" = "county_fips")) %>%
+  group_by(cz_2000) %>%
+  summarise(.groups = "drop") %>%
+  sf::st_make_valid()
 
 # =============================================================================
 # PREP THE WIND FIELD 
@@ -129,7 +148,8 @@ track_lines <- ibtraks %>%
 # Palettes: wind field on FILL (purples); the track category and the school
 # treatment groups each get their own COLOR scale (via ggnewscale) in the plot.
 wind_cols <- c(">=34 kt" = "#cbc9e2", ">=50 kt" = "#9e9ac8", ">=64 kt" = "#6a51a3")
-grp_cols  <- c("Direct" = "#D55E00", "Indirect" = "#0072B2", "Control" = "#B2B2B2")
+grp_cols  <- c("Direct" = "#D55E00", "Indirect" = "#0072B2", "Control" = "grey75", 
+               "Previously Hit" = "grey30")
 
 
 
@@ -151,7 +171,7 @@ plot_storm <- function(focal_sid) {
   track_line <- track_lines %>% filter(SID == focal_sid)
 
   p <- ggplot() +
-    geom_sf(data = tx_counties, fill = "white", color = "grey80", linewidth = 0.25)
+    geom_sf(data = tx_cz, fill = "white", color = "grey70", linewidth = 0.3)
 
   # Wind field (FILL scale).
   if (nrow(wind_f) > 0)
@@ -160,21 +180,23 @@ plot_storm <- function(focal_sid) {
                              name = "Wind field",
                              guide = guide_legend(override.aes = list(alpha = 0.7), order = 3))
 
-  # Storm track, colored by category (1st COLOR scale).
+  # Schools, colored by treatment (1st COLOR scale). Drawn BEFORE the track so
+  # the track sits on top of the points.
+  if (nrow(storm_pts) > 0)
+    p <- p + geom_sf(data = storm_pts, aes(color = group), size = 1.1, alpha = 0.9)
+  p <- p + scale_color_manual(values = grp_cols,
+                              limits = c("Direct","Indirect","Control","Previously Hit"),
+                              drop = FALSE, name = NULL,
+                              guide = guide_legend(override.aes = list(size = 3), order = 1))
+
+  # Storm track on top, colored by category (2nd COLOR scale, via ggnewscale).
+  p <- p + ggnewscale::new_scale_color()
   if (nrow(track_line) > 0)
     p <- p + geom_sf(data = track_line, aes(color = cat_fac), linewidth = 0.8)
   # drop = TRUE: show only the categories this storm actually reached.
   p <- p + scale_color_manual(values = hurr_cols, drop = TRUE,
                               name = "Category",
                               guide = guide_legend(override.aes = list(linewidth = 1.5), order = 2))
-
-  # Schools, colored by treatment (2nd COLOR scale, via ggnewscale).
-  p <- p + ggnewscale::new_scale_color()
-  if (nrow(storm_pts) > 0)
-    p <- p + geom_sf(data = storm_pts, aes(color = group), size = 1.1, alpha = 0.9)
-  p <- p + scale_color_manual(values = grp_cols, limits = c("Control", "Indirect", "Direct"),
-                              drop = FALSE, name = NULL,
-                              guide = guide_legend(override.aes = list(size = 3), order = 1))
 
   p <- p +
     labs(
@@ -243,15 +265,15 @@ points_all <- points %>%
   left_join(storm_labels, by = "sid") %>%
   mutate(storm_label = factor(storm_label, levels = facet_levels))
 
-# Basemap: replicate tx_counties for every facet.
-counties_all <- bind_rows(lapply(facet_levels, function(lbl) {
-  tx_counties %>% mutate(storm_label = factor(lbl, levels = facet_levels))
+# Basemap: replicate the commuting-zone boundaries for every facet.
+cz_all <- bind_rows(lapply(facet_levels, function(lbl) {
+  tx_cz %>% mutate(storm_label = factor(lbl, levels = facet_levels))
 }))
 
 # --- Build plot ---------------------------------------------------------------
 p_all <- ggplot() +
-  # Basemap
-  geom_sf(data = counties_all, fill = "white", color = "grey80", linewidth = 0.2) +
+  # Basemap (commuting zones)
+  geom_sf(data = cz_all, fill = "white", color = "grey70", linewidth = 0.2) +
   # Wind field (fill scale)
   geom_sf(data = wind_all, aes(fill = wind_fac), color = NA, alpha = 0.55) +
   scale_fill_manual(
@@ -259,20 +281,20 @@ p_all <- ggplot() +
     name   = "Wind field",
     guide  = guide_legend(override.aes = list(alpha = 0.7), order = 3)
   ) +
-  # Storm track (1st color scale)
+  # Schools (1st color scale). Drawn BEFORE the track so the track is on top.
+  geom_sf(data = points_all, aes(color = group), size = 0.7, alpha = 0.9) +
+  scale_color_manual(
+    values = grp_cols, limits = c("Direct","Control","Indirect","Previously Hit"),
+    drop   = FALSE, name = "School group",
+    guide  = guide_legend(override.aes = list(size = 3), order = 1)
+  ) +
+  # Storm track on top (2nd color scale via ggnewscale)
+  ggnewscale::new_scale_color() +
   geom_sf(data = track_all, aes(color = cat_fac), linewidth = 0.7) +
   scale_color_manual(
     values = hurr_cols, drop = TRUE,
     name   = "Category",
     guide  = guide_legend(override.aes = list(linewidth = 1.5), order = 2)
-  ) +
-  # Schools (2nd color scale via ggnewscale)
-  ggnewscale::new_scale_color() +
-  geom_sf(data = points_all, aes(color = group), size = 0.7, alpha = 0.9) +
-  scale_color_manual(
-    values = grp_cols, limits = c("Control", "Indirect", "Direct"),
-    drop   = FALSE, name = "School group",
-    guide  = guide_legend(override.aes = list(size = 3), order = 1)
   ) +
   # Facet: 3 rows × 2 cols, chronological left-to-right, top-to-bottom
   facet_wrap(~storm_label, nrow = 2) +
