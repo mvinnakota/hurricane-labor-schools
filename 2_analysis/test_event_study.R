@@ -35,7 +35,8 @@ Diff_in_Diff <- function(dep_var   = "yearly_wages",
                          treat_vars = c("direct", "indirect"),
                          controls   = NULL,
                          fixed_fx   = c("event_time^sid", "tea_school_id^sid"),
-                         df         = test_data){
+                         df         = test_data,
+                         unit_var = "tea_school_id"){
   # Get total number of event years
   total_years <- n_distinct(data$event_time)
   
@@ -45,7 +46,7 @@ Diff_in_Diff <- function(dep_var   = "yearly_wages",
   # make sure panel is balanced by dropping schools that cannot
   # be observed in all years
   data %<>%
-    group_by(sid, tea_school_id) %>%
+    group_by_at(c("sid", unit_var)) %>%
     mutate(n_years = n_distinct(event_time)) %>%
     subset(n_years == total_years) %>%
     ungroup()
@@ -58,7 +59,7 @@ Diff_in_Diff <- function(dep_var   = "yearly_wages",
   # Convert from string to formula
   fmla %<>% as.formula()
   # Cluster on school year
-  model <- feols(fmla, df, cluster = "tea_school_id")
+  model <- feols(fmla, df, cluster = unit_var)
   return(model)
 }
 

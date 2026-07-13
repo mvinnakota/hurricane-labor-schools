@@ -10,40 +10,40 @@ Build_Panel <- function(df=school_storm_unique,
                         direct_var="wind_64kt",
                         indirect_var="wind_64kt",
                         indirect_geo="cz", 
-                        pre_years=4, post_years=3, 
+                        pre_years=4, post_years=1, 
                         never_treated=T, 
                         years_since=7, 
-                        donut="wind_50kt",
-                        radius_miles=300,
+                        donut=NULL,
+                        radius_miles=200,
                         radius_var="dist_to_64kt_miles",
-                        sample_years = c(1989:2019),
+                        sample_years = c(1990:2019),
                         keep_previously_hit = FALSE){
 
   # drop storms that were not hurricanes when they touched texas
   df %<>% subset(max_cat_tx>=1)
   
-  # create direct and indirect vars
+  # create direct var
   df %<>% ungroup() %>% mutate(direct = get(direct_var))
-  if(is.null(indirect_var)){
-    df %<>% mutate(indirect = get(direct_var))
-  } else {
+  
+  # create indirect var if not null
+  if(is.null(indirect_var)){ df$indirect = NA } else {
+    
     df %<>% mutate(indirect = get(indirect_var))
-  }
+    
+    # build indirect treatment var
+    if(!is.null(indirect_geo) & indirect_geo == "county"){
+      df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(indirect == 1)))
+    }
+    if(!is.null(indirect_geo) & indirect_geo == "cz"){
+      df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(indirect == 1)))
+    }
+    # Enforce mutual exclusivity: if a unit is directly treated, it cannot also be indirectly treated
+    df$indirect <- ifelse(df$direct == 1, 0, df$indirect)
+  } 
   
-  # build indirect treatment var
-  if(indirect_geo == "county"){
-    df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(indirect == 1)))
-  }
-  if(indirect_geo == "cz"){
-    df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(indirect == 1)))
-  }
-  
-  # Enforce mutual exclusivity: if a unit is directly treated, it cannot also be indirectly treated
-  df$indirect <- ifelse(df$direct == 1, 0, df$indirect)
-  
-  # Create never_treated flag 
+  # Create never_treated flag using indirect treatment vars
   df %<>%
-    group_by(nces_school_id) %>%
+    group_by(tea_school_id) %>%
     mutate(direct_or_indirect = direct == 1 | indirect == 1) %>%
     mutate(never_treated = !any(direct_or_indirect))
   
@@ -54,8 +54,8 @@ Build_Panel <- function(df=school_storm_unique,
   # time_since_hit measures years elapsed since the school's most recent prior hit:
   # time_since_hit measures. Inf if the school has never been hit or this is their first hit.
   df %<>%
-    arrange(nces_school_id, date, sid) %>%
-    group_by(nces_school_id) %>%
+    arrange(tea_school_id, date, sid) %>%
+    group_by(tea_school_id) %>%
     mutate(
       # most recent hit year in any prior row (NA if no prior hit)
       # locf stands for Last Observation Carried Forward
@@ -82,7 +82,8 @@ Build_Panel <- function(df=school_storm_unique,
       storm_df %<>% mutate(
         previously_hit = time_since_hit <= years_since,
         direct = ifelse(time_since_hit <= years_since, FALSE, direct),
-        indirect = ifelse(time_since_hit <= years_since, FALSE, indirect)) 
+        indirect = ifelse(!is.null(indirect) & time_since_hit <= years_since, 
+                          FALSE, indirect)) 
       }
     
     # If donut, then drop schools that were hit by any wind from the indirect or control group
@@ -112,7 +113,7 @@ Build_Panel <- function(df=school_storm_unique,
         ever_direct = direct, 
         ever_indirect = indirect,
         direct   := ifelse(panel_year < s_year, 0, direct),
-        indirect := ifelse(panel_year < s_year, 0, indirect)
+        indirect := ifelse(!is.null(indirect) & panel_year < s_year, 0, indirect)
       )
     storm_panels %<>% c(list(panel_df))
   }

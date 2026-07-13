@@ -39,19 +39,18 @@ ibtraks <- sf::read_sf("inputs/IBTrACS.since1980.list.v04r00.lines/IBTrACS.since
 # Treatment is defined inside Build_Panel():
 stacked_did <- Build_Panel(
   df=school_storm_unique,
-  direct_var="wind_64kt",
+  direct_var="wind_50kt",
   indirect_var="wind_50kt",
-  indirect_geo="cz",
-  pre_years=4, post_years=2,
+  indirect_geo="county",
+  pre_years=4, post_years=1,
   never_treated=T,
   years_since=7,
-  donut=NULL,
-  radius_miles=300,
+  donut="wind_50kt",
+  radius_miles=200,
   radius_var="dist_to_64kt_miles",
-  sample_years = c(1989:2019),
+  sample_years = c(1990:2019),
   keep_previously_hit = T
-  ) %>%
-  filter(high_cedp == 1)
+  ) 
 
 # Treatment status for each school-storm in the DiD sample.
 # (event_time == 0 holds the un-zeroed storm-year values of direct / indirect.)
