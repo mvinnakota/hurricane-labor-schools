@@ -59,7 +59,7 @@ Diff_in_Diff <- function(dep_var   = "yearly_wages",
   # Convert from string to formula
   fmla %<>% as.formula()
   # Cluster on school year
-  model <- feols(fmla, df, cluster = unit_var)
+  model <- feols(fmla, df, cluster = paste0(unit_var,"^sid"))
   return(model)
 }
 
@@ -145,7 +145,6 @@ Event_Study <- function(dep_var  = "yearly_wages",
 
 return(model)
 }
-
 
 
 Plot_Event_Study <- function(model){

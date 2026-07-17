@@ -22,8 +22,10 @@ cz_2000 <- readxl::read_excel("inputs/USDA Commuting zones/cz_2000") %>%
 # School Locations (TEA)
 ###########################################
 # Read in School Data for 2023-2024 SY
-schools_geojson_url <- "https://services2.arcgis.com/5MVN2jsqIrNZD4tP/arcgis/rest/services/Schools_2023_to_2024/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson"
-schools_sf <- st_read(schools_geojson_url, quiet = TRUE) %>% janitor::clean_names()
+# arc_read() pages through the ArcGIS FeatureServer automatically (the server caps
+# each request at 2000 rows), so all ~9,700 schools are returned.
+schools_url <- "https://services2.arcgis.com/5MVN2jsqIrNZD4tP/arcgis/rest/services/Schools_2023_to_2024/FeatureServer/0"
+schools_sf <- arcgislayers::arc_read(schools_url) %>% janitor::clean_names()
 # select relevant variables
 schools_sf %<>% select("nces_school_id"="user_nces_school_id","lat"="y", "long"="x")
 # Clean id var
@@ -111,7 +113,7 @@ school_xy <- list(c("x", "y")) %>%
 
 # Modal instance
 school_vars <- list(
-  "tea_school_id", 
+  "tea_school_id",
   "nces_district_id",
   "school_name", 
   "school_type",
@@ -125,6 +127,7 @@ school_type <- ccd_data %>%
 
 school_vars %<>% left_join(school_type)
 
+# school_vars %<>% left_join(distinct(select(ccd_data, nces_school_id, tea_school_id)))
 
 ###########################################
 # Get School X and Y coordinates

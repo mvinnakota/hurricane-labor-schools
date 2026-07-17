@@ -174,7 +174,7 @@ wind_sectors_sf <- build_sectors(ebtrak_df)
 # ==================================================================
 ### Subset Wind sectors to texas storms
 # ==================================================================
-# first merge with IBTRACKS storm meta data
+# first merge with IBTRACS storm meta data
 # build storm vars to merge 
 wind_sectors_sf %<>%
   group_by(storm_id) %>%
@@ -186,6 +186,10 @@ wind_sectors_sf %<>%
 # Merge on date, name, and year
 wind_sectors_sf %<>% 
   left_join(storms, join_by(begin_pad <= date, end_pad >= date, name, year)) 
+
+
+# save for loss reg
+save(wind_sectors_sf, file = "intermediates/wind_sectors_sf.Rda")
 
 # figure out which storms overlap with Texas 
 texas <- tigris::states(cb = TRUE) %>%
@@ -274,16 +278,12 @@ dd_tx <- dd_df %>% filter(state == "TX") %>%
   distinct()
 
 
-
-
 # ==================================================================
 ### Create storm level data for all Texas storms
 # ==================================================================
+
 # subset to only storms in our sample
 storms_tx <- storms %>% subset(sid %in% c(wind_sids, traj_sids, dd_sids))
-
-
-
 
 
 

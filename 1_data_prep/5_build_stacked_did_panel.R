@@ -18,30 +18,36 @@ Build_Panel <- function(df=school_storm_unique,
                         radius_var="dist_to_64kt_miles",
                         sample_years = c(1990:2019),
                         keep_previously_hit = FALSE){
+  
+  # ungroup data
+  df %<>% ungroup()
 
-  # drop storms that were not hurricanes when they touched texas
+  # Drop storms that were not hurricanes when they touched texas
   df %<>% subset(max_cat_tx>=1)
   
-  # create direct var
-  df %<>% ungroup() %>% mutate(direct = get(direct_var))
+  # Create direct var and indirect var placeholder
+  df %<>% mutate(direct = get(direct_var), indirect = NA)
   
   # create indirect var if not null
-  if(is.null(indirect_var)){ df$indirect = NA } else {
+  if(!is.null(indirect_var)){
     
     df %<>% mutate(indirect = get(indirect_var))
     
     # build indirect treatment var
-    if(!is.null(indirect_geo) & indirect_geo == "county"){
-      df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(indirect == 1)))
-    }
-    if(!is.null(indirect_geo) & indirect_geo == "cz"){
-      df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(indirect == 1)))
-    }
+    if(!is.null(indirect_geo)){
+      
+      if(indirect_geo == "county"){
+        df %<>% group_by(sid, county_fips) %>% mutate(indirect = as.integer(any(indirect == 1)))
+      }
+      if(indirect_geo == "cz"){
+        df %<>% group_by(sid, cz_2000) %>% mutate(indirect = as.integer(any(indirect == 1)))
+      }}
+    
     # Enforce mutual exclusivity: if a unit is directly treated, it cannot also be indirectly treated
     df$indirect <- ifelse(df$direct == 1, 0, df$indirect)
-  } 
+  }
   
-  # Create never_treated flag using indirect treatment vars
+  # Create never_treated flag 
   df %<>%
     group_by(tea_school_id) %>%
     mutate(direct_or_indirect = direct == 1 | indirect == 1) %>%
@@ -89,7 +95,11 @@ Build_Panel <- function(df=school_storm_unique,
     # If donut, then drop schools that were hit by any wind from the indirect or control group
     if(!is.null(donut)){
       storm_df %<>% mutate(donut_var = get(donut))
-      storm_df %<>% filter(!(donut_var & !direct))
+      if(keep_previously_hit){
+      storm_df %<>% filter(!(donut_var & !direct & !previously_hit))
+      } else {
+        storm_df %<>% filter(!(donut_var & !direct))
+      }
       }
     
     # Drop schools outside the radius
